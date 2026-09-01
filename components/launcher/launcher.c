@@ -1,0 +1,186 @@
+/**
+ * Kaliber launcher — owns the js_task, the engine instance and the app
+ * lifecycle. This is the only place that calls into Unruh.
+ *
+ * Wake flow (deep model):
+ *   wake -> engine up -> load current app bytecode -> onInit/onResume(state)
+ *   -> dispatch wake event -> onRender -> blit -> idle loop -> EV_IDLE_TIMEOUT
+ *   -> onSuspend -> persist state -> deep sleep.
+ */
+#include <stdlib.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+
+#include "hal/board.h"
+#include "core/event_bus.h"
+#include "core/power_mgr.h"
+#include "core/app_store.h"
+#include "unruh/engine.h"
+#include "launcher/launcher.h"
+
+static const char *TAG = "launcher";
+
+extern const js_module_def_t jw_ui_module;
+extern void jw_ui_bind_fb(uint8_t *fb);
+extern bool jw_ui_take_dirty(void);
+
+typedef struct {
+    js_engine_t  *eng;
+    kb_manifest_t mf;
+    uint8_t      *fb;
+    char          app_id[KB_APP_ID_MAX];
+    bool          app_ok;
+} launcher_t;
+
+static launcher_t L;
+
+/* --------------------------------------------------------- app handling */
+
+static void app_fail(const char *why) {
+    ESP_LOGE(TAG, "app '%s' failed: %s (%s)", L.app_id, why,
+             L.eng ? js_last_error(L.eng) : "-");
+    L.app_ok = false;
+    /* TODO: draw error screen into fb + update, fall back to launcher menu */
+}
+
+static bool app_boot(const char *id) {
+    const board_desc_t *b = board_get();
+
+    if (kb_store_read_manifest(id, &L.mf) != ESP_OK) return false;
+    if (L.mf.abi != KB_APP_ABI_VERSION) {
+        ESP_LOGE(TAG, "ABI mismatch: app %lu, fw %d",
+                 (unsigned long)L.mf.abi, KB_APP_ABI_VERSION);
+        return false;
+    }
+
+    js_limits_t lim = {
+        .heap_limit     = b->caps.js_heap_budget,
+        .stack_limit    = 64 * 1024,
+        .hook_budget_ms = 500,
+    };
+    L.eng = js_create(&lim);
+    if (!L.eng) return false;
+
+    /* Capability + permission gated module registration: a module the app
+     * may not use simply does not exist in its context. */
+    js_register_module(L.eng, &jw_ui_module);
+    /* if (L.mf.perm_net)     js_register_module(L.eng, &jw_net_module);   */
+    /* if (L.mf.perm_storage) js_register_module(L.eng, &jw_storage_module); */
+
+    uint8_t *bc; size_t bclen;
+    if (kb_store_read_bytecode(id, &bc, &bclen) != ESP_OK) return false;
+    js_status_t st = js_load_app(L.eng, bc, bclen);
+    free(bc);
+    if (st != JS_OK) { app_fail("load"); return false; }
+
+    strlcpy(L.app_id, id, sizeof L.app_id);
+
+    char *state = kb_store_read_state(id);
+    st = state ? js_call_hook(L.eng, JS_HOOK_ON_RESUME, state, NULL)
+               : js_call_hook(L.eng, JS_HOOK_ON_INIT, NULL, NULL);
+    free(state);
+    if (st != JS_OK) { app_fail("init/resume"); return false; }
+
+    L.app_ok = true;
+    return true;
+}
+
+static void app_render_if_dirty(void) {
+    if (!L.app_ok) return;
+    if (js_call_hook(L.eng, JS_HOOK_ON_RENDER, NULL, NULL) != JS_OK) {
+        app_fail("render");
+        return;
+    }
+    js_pump_jobs(L.eng);
+    if (jw_ui_take_dirty()) {
+        const board_desc_t *b = board_get();
+        b->display->blit(L.fb, board_fb_size());
+        b->display->update(false);
+    }
+}
+
+static void app_suspend_and_sleep(void) {
+    if (L.app_ok) {
+        char *state = NULL;
+        if (js_call_hook(L.eng, JS_HOOK_ON_SUSPEND, NULL, &state) == JS_OK
+            && state) {
+            kb_store_write_state(L.app_id, state);
+        }
+        free(state);
+    }
+    js_destroy(L.eng);
+    L.eng = NULL;
+    kb_power_deep_sleep(); /* no return */
+}
+
+/* -------------------------------------------------------------- js_task */
+
+static void dispatch(const event_t *ev) {
+    char json[128];
+    switch (ev->type) {
+    case EV_BUTTON:
+        kb_power_touch();
+        snprintf(json, sizeof json, "{\"type\":\"button\",\"id\":%lu}",
+                 (unsigned long)ev->arg);
+        break;
+    case EV_TICK_MINUTE:
+        snprintf(json, sizeof json, "{\"type\":\"tick\"}");
+        break;
+    case EV_NET_RESULT:
+        /* payload: net_result_t* -> serialize tag/status, hand body over.
+         * TODO once jw.net exists. Free payload here in all cases. */
+        free(ev->payload);
+        return;
+    case EV_IDLE_TIMEOUT:
+        if (board_get()->caps.sleep_model_deep) app_suspend_and_sleep();
+        return;
+    default:
+        return;
+    }
+    if (L.app_ok &&
+        js_call_hook(L.eng, JS_HOOK_ON_EVENT, json, NULL) != JS_OK)
+        app_fail("event");
+}
+
+static void js_task(void *arg) {
+    (void)arg;
+    const board_desc_t *b = board_get();
+
+    L.fb = heap_caps_malloc(board_fb_size(),
+        b->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
+    jw_ui_bind_fb(L.fb);
+
+    /* TODO: choose current app (NVS "last app", else first watchface). */
+    char ids[4][KB_APP_ID_MAX];
+    int n = kb_store_list(ids, 4);
+    if (n > 0) app_boot(ids[0]);
+    else ESP_LOGW(TAG, "no complications installed");
+
+    /* synthesize wake event so the app can react to the wake cause */
+    event_t wake = { .type = (kb_power_wake_cause() == KB_WAKE_BUTTON)
+                                 ? EV_BUTTON : EV_TICK_MINUTE };
+    dispatch(&wake);
+    app_render_if_dirty();
+
+    event_t ev;
+    for (;;) {
+        uint32_t to = L.app_ok ? js_next_timer_ms(L.eng) : UINT32_MAX;
+        if (kb_bus_receive(&ev, to)) {
+            dispatch(&ev);
+        } else if (L.app_ok) {
+            js_dispatch_timers(L.eng);
+        }
+        app_render_if_dirty();
+        if (!b->caps.sleep_model_deep) kb_power_idle();
+    }
+}
+
+esp_err_t kb_launcher_start(void) {
+    const board_desc_t *b = board_get();
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        js_task, "kb_js", b->caps.js_task_stack / sizeof(StackType_t),
+        NULL, 5, NULL, /* core */ portNUM_PROCESSORS > 1 ? 1 : 0);
+    return ok == pdPASS ? ESP_OK : ESP_FAIL;
+}
