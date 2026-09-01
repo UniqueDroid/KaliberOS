@@ -8,7 +8,7 @@ message(STATUS "Kaliber board: ${KALIBER_BOARD}")
 
 # Merge board sdkconfig on top of project defaults
 set(SDKCONFIG_DEFAULTS
-    "sdkconfig.defaults;components/hal/boards/${KALIBER_BOARD}/sdkconfig.defaults")
+    "sdkconfig.defaults;components/board_hal/boards/${KALIBER_BOARD}/sdkconfig.defaults")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(kaliber)

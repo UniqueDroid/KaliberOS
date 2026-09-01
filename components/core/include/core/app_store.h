@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "hal/board.h"
+#include "board_hal/board.h"
 
 #ifdef __cplusplus
 extern "C" {

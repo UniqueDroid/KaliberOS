@@ -6,6 +6,8 @@ endif()
 idf_component_register(
     SRCS "boards/${KALIBER_BOARD}/board.c"
     INCLUDE_DIRS "include" "boards/${KALIBER_BOARD}"
-    REQUIRES driver esp_adc esp_timer
+    # ESP-IDF 6.x split the old monolithic "driver" component into
+    # per-peripheral esp_driver_* components.
+    REQUIRES esp_driver_gpio esp_driver_spi esp_adc esp_timer freertos
     PRIV_REQUIRES core
 )

@@ -1,4 +1,4 @@
 idf_component_register(
     SRCS "main.c"
-    REQUIRES hal core launcher
+    REQUIRES board_hal core launcher
 )

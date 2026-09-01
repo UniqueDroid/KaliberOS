@@ -3,7 +3,7 @@
  * board -> bus -> store -> power -> launcher (js_task takes over).
  */
 #include "esp_log.h"
-#include "hal/board.h"
+#include "board_hal/board.h"
 #include "core/event_bus.h"
 #include "core/power_mgr.h"
 #include "core/app_store.h"

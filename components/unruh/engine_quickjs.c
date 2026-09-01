@@ -12,7 +12,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 
-#include "hal/board.h"
+#include "board_hal/board.h"
 #include "unruh/engine.h"
 #include "quickjs.h"
 
@@ -30,19 +30,25 @@ struct js_engine {
 
 /* ------------------------------------------------------- allocator hooks */
 
-static void *psram_calloc(JSMallocState *s, size_t count, size_t size) {
-    (void)s;
+/*
+ * quickjs-ng's JSMallocFunctions hooks take a plain `void *opaque` (the
+ * pointer passed as JS_NewRuntime2's second argument, unused here), not a
+ * `JSMallocState *` - that type is Bellard quickjs/an older API, not
+ * exposed by quickjs.h here.
+ */
+static void *psram_calloc(void *opaque, size_t count, size_t size) {
+    (void)opaque;
     return heap_caps_calloc(count, size,
         board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
 }
-static void *psram_malloc(JSMallocState *s, size_t size) {
-    (void)s;
+static void *psram_malloc(void *opaque, size_t size) {
+    (void)opaque;
     return heap_caps_malloc(size,
         board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
 }
-static void psram_free(JSMallocState *s, void *ptr) { (void)s; heap_caps_free(ptr); }
-static void *psram_realloc(JSMallocState *s, void *ptr, size_t size) {
-    (void)s;
+static void psram_free(void *opaque, void *ptr) { (void)opaque; heap_caps_free(ptr); }
+static void *psram_realloc(void *opaque, void *ptr, size_t size) {
+    (void)opaque;
     return heap_caps_realloc(ptr, size,
         board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
 }

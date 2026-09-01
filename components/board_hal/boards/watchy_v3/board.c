@@ -6,13 +6,15 @@
  * the SPI plumbing sketched and the panel init sequence left as TODO.
  */
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_sleep.h"
 #include "esp_log.h"
 
-#include "hal/board.h"
+#include "board_hal/board.h"
 #include "core/event_bus.h"
 #include "pins.h"
 

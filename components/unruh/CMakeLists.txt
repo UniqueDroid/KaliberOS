@@ -13,6 +13,6 @@ endif()
 idf_component_register(
     SRCS "${ENGINE_SRC}" "modules/js_ui.c"
     INCLUDE_DIRS "include"
-    REQUIRES hal core
+    REQUIRES board_hal core
     PRIV_REQUIRES quickjs   # provide as managed component or components/quickjs
 )

@@ -1,0 +1,6 @@
+dependencies:
+  # Provides the esp_littlefs component used by app_store.c for the on-flash
+  # app package store. Not part of built-in ESP-IDF - pulled via the
+  # Component Registry (component name is `esp_littlefs`, package is
+  # `joltwallet/littlefs`).
+  joltwallet/littlefs: "^1.14"

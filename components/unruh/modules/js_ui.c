@@ -12,7 +12,7 @@
  */
 #include <string.h>
 #include "esp_log.h"
-#include "hal/board.h"
+#include "board_hal/board.h"
 #include "unruh/engine.h"
 #include "quickjs.h"
 

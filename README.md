@@ -11,7 +11,7 @@ Complications (JS, ES5 baseline)      examples/complications/
 Launcher      App lifecycle, js_task  components/launcher/
 Unruh         Engine abstraction      components/unruh/      (QuickJS | MQuickJS)
 Core          Event bus, power, store components/core/
-HAL           Board abstraction       components/hal/boards/<board>/
+HAL           Board abstraction       components/board_hal/boards/<board>/
 ESP-IDF / FreeRTOS
 ```
 
@@ -38,11 +38,13 @@ ESP-IDF / FreeRTOS
 
 ## Build
 
+QuickJS-ng is vendored as a git submodule at `third_party/quickjs`, wrapped
+as an ESP-IDF component by `components/quickjs/CMakeLists.txt` (which just
+points `idf_component_register` at the submodule's core sources - the
+submodule itself stays untouched upstream code).
+
 ```sh
-# Provide QuickJS as a component (once), e.g.:
-git clone https://github.com/quickjs-ng/quickjs components/quickjs
-#   -> needs a small idf_component_register wrapper CMakeLists,
-#      or alternatively a registry/managed-component port.
+git submodule update --init third_party/quickjs   # once, or clone with --recurse-submodules
 
 idf.py -DKALIBER_BOARD=watchy_v3 set-target esp32s3
 idf.py -DKALIBER_BOARD=watchy_v3 build flash monitor
@@ -67,7 +69,7 @@ pipeline (pack → push, exit codes, no interactivity).
 
 Skeleton — architecture is in place, grunt work is flagged:
 
-- [ ] **Verify pins.h** (Watchy v3 schematic, PSRAM quad/octal!)
+- [x] **Verify pins.h** (Watchy v3 schematic, PSRAM quad/octal!) - matches PicoWatch's production config.h exactly. PSRAM mode still needs a real check though, not covered by pins.h alone.
 - [ ] SSD1681 init sequence + blit/update in `boards/watchy_v3/board.c`
 - [ ] Font rasterizer in `modules/js_ui.c` (start with an 8×8 bitmap font)
 - [ ] Timer wheel in `engine_quickjs.c` (`js_next_timer_ms` feeds the bus

@@ -1,10 +1,9 @@
 /**
  * Watchy v3 (ESP32-S3) pin map.
  *
- * !! TODO/VERIFY: cross-check every pin against the official Watchy v3
- * schematic / the sqfmi Watchy library (ARDUINO_WATCHY_V3 defines) before
- * first flash. Values below are the commonly published ones but this file
- * is the single source of truth for the port — verify once, then trust.
+ * Verified (01.09.2026) against PicoWatch's config.h, which runs on this
+ * exact board in production (Arduino firmware, not ESP-IDF, but the same
+ * physical pinout). Values match exactly - no discrepancies found.
  */
 #pragma once
 

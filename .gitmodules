@@ -1,0 +1,6 @@
+[submodule "components/quickjs"]
+	path = components/quickjs
+	url = https://github.com/quickjs-ng/quickjs
+[submodule "third_party/quickjs"]
+	path = third_party/quickjs
+	url = https://github.com/quickjs-ng/quickjs
