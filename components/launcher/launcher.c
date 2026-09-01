@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "board_hal/board.h"
 #include "core/event_bus.h"
@@ -68,6 +69,10 @@ static bool app_boot(const char *id) {
     };
     L.eng = js_create(&lim);
     if (!L.eng) return false;
+    /* Success criterion 1 (README): free heap after engine init, critical
+     * on v2/RAM-constrained boards - log it every boot, not just once. */
+    ESP_LOGI(TAG, "post-init: free heap %u B, engine using %u B",
+             (unsigned)esp_get_free_heap_size(), (unsigned)js_mem_used(L.eng));
 
     /* Capability + permission gated module registration: a module the app
      * may not use simply does not exist in its context. */
