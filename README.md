@@ -63,7 +63,10 @@ pipeline (pack → push, exit codes, no interactivity).
 
 ## Design
 
-[`docs/design/`](docs/design/) holds a UI/UX concept for the future menu and Complication look-and-feel (watchface, list menus, health/notification/navigation/work-mode screens, design tokens). Reference for `jw.ui`'s widget layer, not yet implemented.
+[`docs/design/`](docs/design/) holds concept and architecture docs not implemented yet:
+
+- a UI/UX concept for the future menu and Complication look-and-feel (watchface, list menus, health/notification/navigation/work-mode screens, design tokens) — reference for `jw.ui`'s widget layer.
+- [Cadran](docs/design/cadran-watchface-engine.md), the planned `components/cadran/` declarative watchface renderer — minute ticks render in pure C from a serialized widget tree, no JS engine boot required. Slots in after the SSD1681 driver and font rasterizer, before MQuickJS.
 
 ## Status / Roadmap
 
