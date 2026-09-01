@@ -8,6 +8,7 @@
  */
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -24,6 +25,7 @@ struct js_engine {
     JSValue     app_obj;          /* object passed to global App({...})     */
     js_limits_t lim;
     int64_t     hook_deadline_us; /* 0 = no budget active                   */
+    bool        timed_out;        /* set by interrupt_handler, see below    */
     char        err[160];
     /* TODO: timer wheel (id -> {due_us, JSValue cb, interval}) */
 };
@@ -73,9 +75,16 @@ static int interrupt_handler(JSRuntime *rt, void *opaque) {
     js_engine_t *e = opaque;
     (void)rt;
     if (e->hook_deadline_us && esp_timer_get_time() > e->hook_deadline_us) {
-        snprintf(e->err, sizeof e->err, "hook exceeded %lu ms budget",
-                 (unsigned long)e->lim.hook_budget_ms);
-        return 1; /* abort execution -> JS_ERR_TIMEOUT */
+        /* quickjs.c's own interrupt-check path (JS_ThrowInternalError(ctx,
+         * "interrupted")) hardcodes the exception message - it does NOT
+         * use e->err, so js_call_hook
+         * can't tell a budget timeout apart from any other exception by
+         * inspecting the thrown message text. Flag it out-of-band instead;
+         * verified against real hardware (budget-hog test complication,
+         * 01.09.2026) that this path is actually reachable and that a
+         * string-match on the exception text never fires. */
+        e->timed_out = true;
+        return 1; /* abort execution -> JS_ERR_TIMEOUT, see js_call_hook */
     }
     return 0;
 }
@@ -185,6 +194,7 @@ js_status_t js_call_hook(js_engine_t *e, js_hook_t hook,
 
     e->hook_deadline_us = esp_timer_get_time() +
                           (int64_t)e->lim.hook_budget_ms * 1000;
+    e->timed_out = false;
     JSValue ret = JS_Call(e->ctx, fn, e->app_obj, json_arg ? 1 : 0, &arg);
     e->hook_deadline_us = 0;
 
@@ -205,9 +215,16 @@ js_status_t js_call_hook(js_engine_t *e, js_hook_t hook,
 exc: {
         JSValue x = JS_GetException(e->ctx);
         const char *s = JS_ToCString(e->ctx, x);
-        js_status_t st = (s && strstr(s, "budget")) ? JS_ERR_TIMEOUT
-                                                    : JS_ERR_EXCEPTION;
-        snprintf(e->err, sizeof e->err, "%s", s ? s : "exception");
+        js_status_t st;
+        if (e->timed_out) {
+            st = JS_ERR_TIMEOUT;
+            e->timed_out = false;
+            snprintf(e->err, sizeof e->err, "hook exceeded %lu ms budget",
+                     (unsigned long)e->lim.hook_budget_ms);
+        } else {
+            st = JS_ERR_EXCEPTION;
+            snprintf(e->err, sizeof e->err, "%s", s ? s : "exception");
+        }
         JS_FreeCString(e->ctx, s);
         JS_FreeValue(e->ctx, x);
         ESP_LOGW(TAG, "%s failed: %s", hook_name(hook), e->err);
