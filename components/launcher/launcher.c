@@ -57,7 +57,13 @@ static bool app_boot(const char *id) {
 
     js_limits_t lim = {
         .heap_limit     = b->caps.js_heap_budget,
-        .stack_limit    = 64 * 1024,
+        /* Must stay well below caps.js_task_stack (the real FreeRTOS
+         * task stack, e.g. 32k on watchy_v3): QuickJS's own guard trips
+         * a JS RangeError, but if it's set higher than the actual task
+         * stack, the FreeRTOS stack guard trips first instead - a hard
+         * crash, not a catchable JS error. Was hardcoded to 64k here
+         * while js_task_stack was 32k - always past the real limit. */
+        .stack_limit    = b->caps.js_task_stack - 12 * 1024,
         .hook_budget_ms = 500,
     };
     L.eng = js_create(&lim);

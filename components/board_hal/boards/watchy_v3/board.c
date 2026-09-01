@@ -96,7 +96,7 @@ static esp_err_t input_init(void) {
         gpio_config_t io = {
             .pin_bit_mask = 1ULL << map[i].pin,
             .mode = GPIO_MODE_INPUT,
-            .pull_up_en = GPIO_PULLUP_ENABLE,   /* verify polarity on v3! */
+            .pull_up_en = GPIO_PULLUP_ENABLE,   /* active-low, verified - see pins.h */
             .intr_type = GPIO_INTR_NEGEDGE,
         };
         gpio_config(&io);
@@ -160,8 +160,15 @@ static const board_desc_t desc = {
     .input   = &input_ops,
     .power   = &power_ops,
     .caps = {
-        .has_psram        = true,
-        .js_heap_budget   = 1024 * 1024,
+        /* ESP32-S3FN8 (per watchy.sqfmi.com/docs/hardware's revision
+         * table): 8 MB embedded flash, NO PSRAM. JS world lives in
+         * internal SRAM - keep the budget honest and let apps fail with
+         * a JS OOM instead of starving the system heap. Unverified
+         * against the actual populated module though (see chat with
+         * Jan, 01.09.2026) - confirm the exact part number before
+         * trusting this over a schematic. */
+        .has_psram        = false,
+        .js_heap_budget   = 96 * 1024,
         .js_task_stack    = 32 * 1024,
         .engine           = KB_ENGINE_QUICKJS,
         .disp_w           = DISP_W,
