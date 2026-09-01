@@ -86,9 +86,16 @@ Skeleton — architecture is in place, grunt work is flagged:
 
 ## Success criteria for the first milestone
 
-1. Log free heap after engine init on the target board (critical for v2).
+1. [x] Log free heap after engine init on the target board (critical for
+   v2). Real v3 numbers (2026-09-01, `hello` example, seeded via
+   `main/seed_hello.c` - see its header comment): 192132 B free heap,
+   engine using 62321 B of its 96 kB budget.
 2. Wake→display latency < e-ink refresh time (engine boot must never be
-   the bottleneck).
+   the bottleneck). Not measurable yet - the SSD1681 driver is still a
+   stub (`disp_blit`/`disp_update` TODO).
 3. A `while(true)` Complication gets torn down by the budget handler after
-   500 ms as a JS error — without a watchdog reset.
-4. Deep-sleep round trip: the counter in `hello` keeps counting across wakes.
+   500 ms as a JS error — without a watchdog reset. Not tested yet -
+   `hello` has no infinite loop, needs a dedicated hostile test app.
+4. Deep-sleep round trip: the counter in `hello` keeps counting across
+   wakes. Not tested yet - needs an actual deep-sleep cycle triggered
+   (idle timeout or forced).
