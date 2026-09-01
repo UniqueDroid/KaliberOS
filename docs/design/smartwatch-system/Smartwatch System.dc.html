@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/modernist-adb92b0d-ee12-493d-8e5e-6e061a9eb858/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap">
+<script src="https://unpkg.com/lucide@0.446.0/dist/umd/lucide.js"></script>
+<style>
+  body { margin: 0; background: #e2e0e0; }
+  a { color: var(--color-accent); }
+  a:hover { color: var(--color-accent-700); }
+  [data-lucide] { display: block; }
+</style>
+</helmet>
+
+<div style="padding: 56px 64px 96px; font-family: var(--font-body); color: var(--color-text); display: flex; flex-direction: column; gap: 56px">
+
+  <header style="display: flex; flex-direction: column; gap: 16px; max-width: 900px">
+    <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-accent-700)">Modernist · Wearable</div>
+    <h1 style="font-size: 56px; margin: 0; letter-spacing: -0.02em">Smartwatch System</h1>
+    <p style="margin: 0; font-size: 17px; max-width: 640px; color: var(--color-neutral-800); text-wrap: pretty">Display 390 × 450 px, rechteckig. Listen-Navigation, flächige 2px-Regeln, Beschriftung immer linksbündig. Vier Domänen: Gesundheit, Mitteilungen, Navigation, Arbeitsmodus.</p>
+    <div style="height: 2px; background: var(--color-text); margin-top: 8px"></div>
+  </header>
+
+  <section style="display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid var(--color-divider); padding-bottom: 12px">
+      <span style="font-size: 13px; font-weight: 800; letter-spacing: 0.08em; color: var(--color-accent)">01</span>
+      <h2 style="font-size: 26px; margin: 0">Ziffernblatt</h2>
+      <span style="font-size: 13px; color: var(--color-neutral-600)">Vollbild · Tag / Ambient</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 40px">
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Tag · aktiv</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px 0; font-size: 15px; font-weight: 600; letter-spacing: 0.04em; color: var(--color-neutral-700)">
+            <span>MO 14. SEP</span>
+            <span style="display: flex; align-items: center; gap: 6px; color: var(--color-accent)"><i data-lucide="battery-medium" style="width:18px;height:18px"></i>78%</span>
+          </div>
+          <div style="padding: 8px 24px 0; flex: 1; display: flex; flex-direction: column; justify-content: center">
+            <div style="font-family: var(--font-heading); font-weight: 800; font-size: 132px; line-height: 0.82; letter-spacing: -0.05em">09<span style="color: var(--color-accent)">:</span>41</div>
+            <div style="height: 2px; background: var(--color-text); margin: 20px 0 0"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 2px solid var(--color-text)">
+            <div style="padding: 14px 12px 18px 24px; display: flex; flex-direction: column; gap: 4px">
+              <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">PULS</span>
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 30px; line-height: 1">62</span>
+            </div>
+            <div style="padding: 14px 12px 18px; display: flex; flex-direction: column; gap: 4px; border-left: 2px solid var(--color-divider)">
+              <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">SCHRITTE</span>
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 30px; line-height: 1">4,2k</span>
+            </div>
+            <div style="padding: 14px 24px 18px 12px; display: flex; flex-direction: column; gap: 4px; border-left: 2px solid var(--color-divider)">
+              <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">SPO₂</span>
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 30px; line-height: 1">98</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Ambient · Always-on</div>
+        <div style="width: 390px; height: 450px; background: var(--color-neutral-900); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="display: flex; justify-content: space-between; padding: 16px 24px 0; font-size: 15px; font-weight: 600; letter-spacing: 0.04em; color: var(--color-neutral-500)">
+            <span>MO 14. SEP</span><span>78%</span>
+          </div>
+          <div style="padding: 8px 24px 0; flex: 1; display: flex; flex-direction: column; justify-content: center">
+            <div style="font-family: var(--font-heading); font-weight: 400; font-size: 132px; line-height: 0.82; letter-spacing: -0.04em; color: var(--color-neutral-200)">09<span style="color: var(--color-accent-400)">:</span>41</div>
+          </div>
+          <div style="border-top: 2px solid var(--color-neutral-700); padding: 16px 24px 22px; display: flex; align-items: center; gap: 10px; color: var(--color-neutral-400); font-size: 15px; font-weight: 600; letter-spacing: 0.04em">
+            <i data-lucide="moon" style="width:18px;height:18px"></i>SCHLAFMODUS BIS 06:30
+          </div>
+        </div>
+      </div>
+
+      <div style="max-width: 300px; display: flex; flex-direction: column; gap: 12px; padding-top: 26px">
+        <div style="font-size: 15px; font-weight: 700">Regel</div>
+        <p style="margin: 0; font-size: 14px; color: var(--color-neutral-800); text-wrap: pretty">Die Uhrzeit ist die einzige Display-Größe im System (132 px). Rot markiert genau ein Element pro Screen — hier den Doppelpunkt. Ambient invertiert auf Neutral 900 und schaltet den Akzent auf Accent 400.</p>
+        <div style="height: 2px; background: var(--color-divider)"></div>
+        <div style="font-size: 13px; color: var(--color-neutral-700); line-height: 1.7">Rand links/rechts: 24 px<br>Rand oben: 16 px<br>Kein Radius, keine Rundung</div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid var(--color-divider); padding-bottom: 12px">
+      <span style="font-size: 13px; font-weight: 800; letter-spacing: 0.08em; color: var(--color-accent)">02</span>
+      <h2 style="font-size: 26px; margin: 0">Menü</h2>
+      <span style="font-size: 13px; color: var(--color-neutral-600)">Vertikale Liste · Zeile 66 px</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 40px">
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Hauptmenü · Oben</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 14px 24px 12px; border-bottom: 2px solid var(--color-text); display: flex; justify-content: space-between; align-items: baseline">
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 22px; letter-spacing: -0.01em">MENÜ</span>
+            <span style="font-size: 14px; font-weight: 600; color: var(--color-neutral-600)">09:41</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden">
+            <sc-for list="{{ menuTop }}" as="row" hint-placeholder-count="5">
+              <div style="height: 66px; display: flex; align-items: center; gap: 16px; padding: 0 20px 0 24px; border-bottom: 2px solid var(--color-divider)">
+                <sc-if value="{{ iconsInMenu }}" hint-placeholder-val="{{ true }}"><i data-lucide="{{ row.icon }}" style="width:24px;height:24px;color:var(--color-neutral-800);flex:none"></i></sc-if>
+                <span style="font-family: var(--font-heading); font-weight: 700; font-size: 21px; flex: 1; letter-spacing: -0.01em">{{ row.label }}</span>
+                <span style="font-size: 14px; font-weight: 600; color: var(--color-neutral-600)">{{ row.meta }}</span>
+                <i data-lucide="chevron-right" style="width:20px;height:20px;color:var(--color-neutral-500);flex:none"></i>
+              </div>
+            </sc-for>
+          </div>
+          <div style="height: 6px; flex: none; background: var(--color-accent); width: 40%"></div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Hauptmenü · gescrollt, Fokus</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 10px 24px 8px; border-bottom: 2px solid var(--color-divider); font-size: 13px; font-weight: 700; letter-spacing: 0.1em; color: var(--color-neutral-600)">MENÜ · 5 VON 8</div>
+          <div style="flex: 1; display: flex; flex-direction: column">
+            <sc-for list="{{ menuScrolled }}" as="row" hint-placeholder-count="5">
+              <div style="height: 66px; display: flex; align-items: center; gap: 16px; padding: 0 20px 0 24px; border-bottom: 2px solid var(--color-divider)">
+                <sc-if value="{{ iconsInMenu }}" hint-placeholder-val="{{ true }}"><i data-lucide="{{ row.icon }}" style="width:24px;height:24px;color:var(--color-neutral-800);flex:none"></i></sc-if>
+                <span style="font-family: var(--font-heading); font-weight: 700; font-size: 21px; flex: 1; letter-spacing: -0.01em">{{ row.label }}</span>
+                <span style="font-size: 14px; font-weight: 600; color: var(--color-neutral-600)">{{ row.meta }}</span>
+                <i data-lucide="chevron-right" style="width:20px;height:20px;color:var(--color-neutral-500);flex:none"></i>
+              </div>
+            </sc-for>
+            <div style="height: 66px; display: flex; align-items: center; gap: 16px; padding: 0 20px 0 24px; background: var(--color-accent); color: var(--color-bg)">
+              <i data-lucide="hard-hat" style="width:24px;height:24px;flex:none"></i>
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 21px; flex: 1; letter-spacing: -0.01em">ARBEITSMODUS</span>
+              <i data-lucide="chevron-right" style="width:20px;height:20px;flex:none"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Untermenü · Gesundheit</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 12px 24px 12px; border-bottom: 2px solid var(--color-text); display: flex; align-items: center; gap: 12px">
+            <i data-lucide="chevron-left" style="width:22px;height:22px;color:var(--color-accent)"></i>
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 20px; letter-spacing: -0.01em">GESUNDHEIT</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden">
+            <sc-for list="{{ submenu }}" as="row" hint-placeholder-count="5">
+              <div style="height: 66px; display: flex; align-items: center; gap: 16px; padding: 0 24px; border-bottom: 2px solid var(--color-divider)">
+                <span style="font-family: var(--font-heading); font-weight: 700; font-size: 20px; flex: 1; letter-spacing: -0.01em">{{ row.label }}</span>
+                <span style="font-family: var(--font-heading); font-weight: 800; font-size: 20px; color: var(--color-accent-700)">{{ row.value }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="max-width: 300px; display: flex; flex-direction: column; gap: 12px; padding-top: 26px">
+        <div style="font-size: 15px; font-weight: 700">Regel</div>
+        <p style="margin: 0; font-size: 14px; color: var(--color-neutral-800); text-wrap: pretty">Eine Zeile ist 66 px hoch — über dem 44-px-Minimum, mit Handschuh bedienbar. Fünf Zeilen sind sichtbar, die sechste wird angeschnitten und zeigt so den Scrollweg. Der Fokus ist eine volle rote Fläche, nie ein Rahmen.</p>
+        <div style="height: 2px; background: var(--color-divider)"></div>
+        <div style="font-size: 13px; color: var(--color-neutral-700); line-height: 1.7">Icon 24 px, Abstand 16 px<br>Label Archivo 700 / 21 px<br>Trenner 2 px, Divider-Farbe</div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid var(--color-divider); padding-bottom: 12px">
+      <span style="font-size: 13px; font-weight: 800; letter-spacing: 0.08em; color: var(--color-accent)">03</span>
+      <h2 style="font-size: 26px; margin: 0">Domänen</h2>
+      <span style="font-size: 13px; color: var(--color-neutral-600)">Je ein Screen-Typ pro Bereich</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 40px">
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Gesundheit · Messwert</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 12px 24px; border-bottom: 2px solid var(--color-text); display: flex; align-items: center; gap: 12px">
+            <i data-lucide="chevron-left" style="width:22px;height:22px;color:var(--color-accent)"></i>
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 20px">PULS</span>
+          </div>
+          <div style="padding: 24px 24px 0; display: flex; align-items: baseline; gap: 10px">
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 88px; line-height: 0.85; letter-spacing: -0.04em">62</span>
+            <span style="font-size: 18px; font-weight: 600; color: var(--color-neutral-600)">bpm</span>
+          </div>
+          <div style="padding: 18px 24px 0; font-size: 15px; font-weight: 600; color: var(--color-neutral-700); letter-spacing: 0.04em">RUHEBEREICH · 24 STUNDEN</div>
+          <div style="flex: 1; display: flex; align-items: flex-end; gap: 3px; padding: 16px 24px 0">
+            <sc-for list="{{ bars }}" as="bar" hint-placeholder-count="24">
+              <div style="{{ bar.style }}"></div>
+            </sc-for>
+          </div>
+          <div style="border-top: 2px solid var(--color-text); padding: 14px 24px 20px; display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; color: var(--color-neutral-700)">
+            <span>MIN 48</span><span>Ø 64</span><span style="color: var(--color-accent-700)">MAX 141</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Mitteilung · eingehend</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="background: var(--color-accent); color: var(--color-bg); padding: 14px 24px 16px; display: flex; flex-direction: column; gap: 2px">
+            <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.1em">MITTEILUNG · JETZT</span>
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 24px; letter-spacing: -0.01em">Schichtplan geändert</span>
+          </div>
+          <div style="padding: 20px 24px; flex: 1; display: flex; flex-direction: column; gap: 12px">
+            <div style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">LEITSTAND NORD</div>
+            <p style="margin: 0; font-size: 19px; line-height: 1.4; text-wrap: pretty">Beginn heute 14:00 statt 13:00. Übergabe an Halle 2 verschoben.</p>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 2px solid var(--color-text)">
+            <div style="height: 68px; display: flex; align-items: center; padding-left: 24px; font-family: var(--font-heading); font-weight: 800; font-size: 18px">SPÄTER</div>
+            <div style="height: 68px; display: flex; align-items: center; padding-left: 24px; font-family: var(--font-heading); font-weight: 800; font-size: 18px; background: var(--color-text); color: var(--color-bg)">GELESEN</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Navigation · Abbiegehinweis</div>
+        <div style="width: 390px; height: 450px; background: var(--color-neutral-900); color: var(--color-neutral-100); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 14px 24px 10px; font-size: 14px; font-weight: 700; letter-spacing: 0.1em; color: var(--color-neutral-500)">ROUTE · 4,2 KM · 38 MIN</div>
+          <div style="padding: 8px 24px 0; display: flex; align-items: center; gap: 18px">
+            <i data-lucide="corner-up-right" style="width:64px;height:64px;color:var(--color-accent-400);flex:none"></i>
+            <div style="display: flex; flex-direction: column">
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 56px; line-height: 0.9; letter-spacing: -0.03em">240<span style="font-size: 24px; font-weight: 600"> m</span></span>
+            </div>
+          </div>
+          <div style="padding: 20px 24px 0; font-family: var(--font-heading); font-weight: 700; font-size: 26px; letter-spacing: -0.01em; line-height: 1.15">Bergmannstraße</div>
+          <div style="flex: 1"></div>
+          <div style="border-top: 2px solid var(--color-neutral-700); display: flex; flex-direction: column">
+            <div style="padding: 14px 24px; display: flex; align-items: center; gap: 12px; font-size: 16px; color: var(--color-neutral-400); border-bottom: 2px solid var(--color-neutral-800)">
+              <i data-lucide="corner-up-left" style="width:20px;height:20px"></i>dann Wilmsstraße · 600 m
+            </div>
+            <div style="padding: 16px 24px 22px; display: flex; justify-content: space-between; font-size: 15px; font-weight: 600; color: var(--color-neutral-500)">
+              <span>ANKUNFT 10:19</span><span>NORD 3°</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Arbeitsmodus · Status</div>
+        <div style="width: 390px; height: 450px; background: var(--color-bg); box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden">
+          <div style="padding: 12px 24px; border-bottom: 2px solid var(--color-text); display: flex; align-items: center; gap: 12px">
+            <i data-lucide="hard-hat" style="width:22px;height:22px"></i>
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 20px">ARBEITSMODUS</span>
+          </div>
+          <div style="padding: 20px 24px 0; display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">SCHICHT LÄUFT</span>
+            <span style="font-family: var(--font-heading); font-weight: 800; font-size: 64px; line-height: 0.9; letter-spacing: -0.03em">03:12</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; margin-top: 20px; border-top: 2px solid var(--color-divider)">
+            <sc-for list="{{ workRows }}" as="row" hint-placeholder-count="3">
+              <div style="height: 62px; display: flex; align-items: center; padding: 0 24px; border-bottom: 2px solid var(--color-divider); gap: 12px">
+                <span style="font-size: 17px; font-weight: 600; flex: 1">{{ row.label }}</span>
+                <span style="font-family: var(--font-heading); font-weight: 800; font-size: 17px; letter-spacing: 0.04em">{{ row.state }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="height: 72px; background: var(--color-accent); color: var(--color-bg); display: flex; align-items: center; padding-left: 24px; font-family: var(--font-heading); font-weight: 800; font-size: 20px; letter-spacing: 0.02em">PAUSE STARTEN</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid var(--color-divider); padding-bottom: 12px">
+      <span style="font-size: 13px; font-weight: 800; letter-spacing: 0.08em; color: var(--color-accent)">04</span>
+      <h2 style="font-size: 26px; margin: 0">Grundlagen</h2>
+      <span style="font-size: 13px; color: var(--color-neutral-600)">Farbe · Typo · Icons · Komponenten · Raster</span>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 2px; background: var(--color-divider); border: 2px solid var(--color-divider)">
+
+      <div style="background: var(--color-bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+        <h3 style="margin: 0; font-size: 18px">Farbe</h3>
+        <div style="display: flex; flex-direction: column; gap: 12px">
+          <sc-for list="{{ colorRoles }}" as="role" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--color-neutral-700)">
+                <span>{{ role.name }}</span><span>{{ role.use }}</span>
+              </div>
+              <div style="display: flex; height: 34px">
+                <sc-for list="{{ role.steps }}" as="step" hint-placeholder-count="5">
+                  <div style="{{ step.style }}"></div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <p style="margin: 0; font-size: 13px; color: var(--color-neutral-700); text-wrap: pretty">Rot nur als Fläche für genau eine Aktion pro Screen. Fließtext im Akzent immer Accent 700.</p>
+      </div>
+
+      <div style="background: var(--color-bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+        <h3 style="margin: 0; font-size: 18px">Typo · Archivo</h3>
+        <div style="display: flex; flex-direction: column">
+          <sc-for list="{{ typeScale }}" as="t" hint-placeholder-count="5">
+            <div style="display: flex; align-items: baseline; gap: 16px; padding: 10px 0; border-bottom: 2px solid var(--color-divider)">
+              <span style="font-size: 11px; font-weight: 700; color: var(--color-neutral-600); width: 92px; flex: none; letter-spacing: 0.06em">{{ t.role }}</span>
+              <span style="{{ t.style }}">{{ t.sample }}</span>
+              <span style="font-size: 11px; color: var(--color-neutral-600); flex: none">{{ t.spec }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <p style="margin: 0; font-size: 13px; color: var(--color-neutral-700)">Kleinster Wert auf dem Display: 14 px, nur für Metadaten. Alles Bedienbare ab 17 px.</p>
+      </div>
+
+      <div style="background: var(--color-bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+        <h3 style="margin: 0; font-size: 18px">Icons · Lucide 24 px</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; background: var(--color-divider)">
+          <sc-for list="{{ icons }}" as="ic" hint-placeholder-count="12">
+            <div style="background: var(--color-bg); aspect-ratio: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 12px">
+              <i data-lucide="{{ ic.name }}" style="width:24px;height:24px;stroke-width:2"></i>
+              <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--color-neutral-600); text-transform: uppercase">{{ ic.label }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <p style="margin: 0; font-size: 13px; color: var(--color-neutral-700)">Strichstärke 2 px, gleiche Stärke wie die Trenner. Nie gefüllt, nie eingefärbt außer im Fokuszustand.</p>
+      </div>
+
+      <div style="background: var(--color-bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+        <h3 style="margin: 0; font-size: 18px">Komponenten</h3>
+        <div style="display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">LISTENZEILE · RUHE / FOKUS</span>
+            <div style="width: 100%; height: 60px; display: flex; align-items: center; gap: 14px; padding: 0 16px; border: 2px solid var(--color-divider)">
+              <i data-lucide="timer" style="width:22px;height:22px"></i>
+              <span style="font-family: var(--font-heading); font-weight: 700; font-size: 19px; flex: 1">Timer</span>
+              <i data-lucide="chevron-right" style="width:18px;height:18px;color:var(--color-neutral-500)"></i>
+            </div>
+            <div style="width: 100%; height: 60px; display: flex; align-items: center; gap: 14px; padding: 0 16px; background: var(--color-accent); color: var(--color-bg)">
+              <i data-lucide="timer" style="width:22px;height:22px"></i>
+              <span style="font-family: var(--font-heading); font-weight: 800; font-size: 19px; flex: 1">Timer</span>
+              <i data-lucide="chevron-right" style="width:18px;height:18px"></i>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">AKTIONSLEISTE · 72 PX</span>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px">
+              <div style="height: 60px; display: flex; align-items: center; padding-left: 16px; border: 2px solid var(--color-text); font-family: var(--font-heading); font-weight: 800; font-size: 17px">ZURÜCK</div>
+              <div style="height: 60px; display: flex; align-items: center; padding-left: 16px; background: var(--color-text); color: var(--color-bg); font-family: var(--font-heading); font-weight: 800; font-size: 17px">OK</div>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-neutral-600)">SCHALTER · AN / AUS</span>
+            <div style="display: flex; gap: 10px">
+              <div style="display: flex; align-items: center; height: 44px; border: 2px solid var(--color-text)">
+                <span style="width: 44px; height: 44px; background: var(--color-accent)"></span>
+                <span style="padding: 0 16px; font-family: var(--font-heading); font-weight: 800; font-size: 15px">AN</span>
+              </div>
+              <div style="display: flex; align-items: center; height: 44px; border: 2px solid var(--color-divider)">
+                <span style="padding: 0 16px; font-family: var(--font-heading); font-weight: 800; font-size: 15px; color: var(--color-neutral-600)">AUS</span>
+                <span style="width: 44px; height: 44px; background: var(--color-neutral-300)"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: var(--color-bg); padding: 24px; display: flex; flex-direction: column; gap: 16px; grid-column: span 2">
+        <h3 style="margin: 0; font-size: 18px">Raster &amp; Trefferflächen</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start">
+          <div style="width: 260px; height: 300px; border: 2px solid var(--color-text); position: relative; background: repeating-linear-gradient(to right, transparent 0 15.33px, var(--color-neutral-300) 15.33px 16px), repeating-linear-gradient(to bottom, transparent 0 15.33px, var(--color-neutral-300) 15.33px 16px)">
+            <div style="position: absolute; left: 16px; right: 16px; top: 16px; height: 44px; background: color-mix(in srgb, var(--color-accent) 22%, transparent); border: 2px solid var(--color-accent)"></div>
+            <div style="position: absolute; left: 16px; right: 16px; top: 76px; height: 44px; border: 2px solid var(--color-neutral-600)"></div>
+            <div style="position: absolute; left: 16px; right: 16px; bottom: 16px; height: 48px; background: var(--color-text)"></div>
+          </div>
+          <div style="max-width: 380px; display: flex; flex-direction: column; gap: 12px">
+            <div style="display: flex; flex-direction: column">
+              <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="6">
+                <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 2px solid var(--color-divider); font-size: 14px">
+                  <span style="color: var(--color-neutral-700)">{{ m.k }}</span>
+                  <span style="font-weight: 700">{{ m.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: var(--color-neutral-700); text-wrap: pretty">Alles sitzt auf 8 px. Der Seitenrand von 24 px gilt auf jedem Screen und wird nur von vollflächigen Zeilen und Aktionsleisten durchbrochen — die laufen bis zur Displaykante.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;iconsInMenu&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Menü&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() { this.icons(); }
+  componentDidUpdate() { this.icons(); }
+  icons() {
+    const go = () => { if (window.lucide) window.lucide.createIcons(); };
+    go();
+    if (!window.lucide) setTimeout(go, 400);
+    if (!window.lucide) setTimeout(go, 1500);
+  }
+  renderVals() {
+    const heights = [38, 30, 26, 22, 24, 20, 28, 46, 62, 54, 40, 44, 58, 72, 50, 42, 36, 48, 66, 88, 60, 44, 34, 28];
+    return {
+      iconsInMenu: this.props.iconsInMenu ?? true,
+      menuTop: [
+        { icon: 'heart-pulse', label: 'GESUNDHEIT', meta: '62' },
+        { icon: 'bell', label: 'MITTEILUNGEN', meta: '3' },
+        { icon: 'map', label: 'NAVIGATION', meta: '' },
+        { icon: 'timer', label: 'TIMER', meta: '' },
+        { icon: 'activity', label: 'TRAINING', meta: '' },
+        { icon: 'thermometer', label: 'UMGEBUNG', meta: '' }
+      ],
+      menuScrolled: [
+        { icon: 'map', label: 'NAVIGATION', meta: '' },
+        { icon: 'timer', label: 'TIMER', meta: '' },
+        { icon: 'activity', label: 'TRAINING', meta: '' },
+        { icon: 'thermometer', label: 'UMGEBUNG', meta: '3°' },
+        { icon: 'settings', label: 'EINSTELLUNGEN', meta: '' }
+      ],
+      submenu: [
+        { label: 'PULS', value: '62' },
+        { label: 'SAUERSTOFF', value: '98%' },
+        { label: 'SCHLAF', value: '7:12' },
+        { label: 'STRESS', value: 'NIEDRIG' },
+        { label: 'BERICHTE', value: '' }
+      ],
+      workRows: [
+        { label: 'Stummschaltung', state: 'AN' },
+        { label: 'Handschuh-Modus', state: 'AN' },
+        { label: 'Notruf-Taste', state: 'BEREIT' }
+      ],
+      bars: heights.map(h => ({ style: { flex: 1, background: h > 80 ? '#ec3013' : '#bab6b6', height: h + 'px' } })),
+      colorRoles: [
+        { name: 'GRUND · NEUTRAL', use: '100 → 900', steps: ['#f8f4f4', '#eae7e7', '#d7d3d3', '#bab6b6', '#9b9797', '#7d7979', '#605d5d', '#444141', '#2d2b2b'] },
+        { name: 'AKZENT · ROT', use: '100 → 900', steps: ['#fff2ef', '#ffe0d9', '#ffc4b8', '#ff9783', '#ff563c', '#ec3013', '#dd2b0f', '#ae1800', '#7c1405'] },
+        { name: 'DISPLAY', use: 'Grund / Ink / Akzent', steps: ['#f3f2f2', '#201e1d', '#ec3013'] }
+      ].map(r => ({ name: r.name, use: r.use, steps: r.steps.map(c => ({ style: { flex: 1, background: c } })) })),
+      typeScale: [
+        { role: 'UHRZEIT', sample: '09:41', spec: '132 / 800', font: '800 44px/1.1 Archivo, sans-serif' },
+        { role: 'MESSWERT', sample: '62 bpm', spec: '88 / 800', font: '800 34px/1.2 Archivo, sans-serif' },
+        { role: 'SCREEN-TITEL', sample: 'GESUNDHEIT', spec: '20 / 800', font: '800 20px/1.2 Archivo, sans-serif' },
+        { role: 'MENÜ-LABEL', sample: 'MITTEILUNGEN', spec: '21 / 700', font: '700 21px/1.2 Archivo, sans-serif' },
+        { role: 'FLIESSTEXT', sample: 'Beginn heute 14:00 statt 13:00.', spec: '19 / 400', font: '400 19px/1.4 Archivo, sans-serif' },
+        { role: 'META', sample: 'ROUTE · 4,2 KM', spec: '14 / 700', font: '700 14px/1.2 Archivo, sans-serif' }
+      ].map(t => ({ role: t.role, sample: t.sample, spec: t.spec, style: { flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', font: t.font } })),
+      icons: [
+        { name: 'heart-pulse', label: 'Puls' }, { name: 'bell', label: 'Mitteilung' },
+        { name: 'map', label: 'Navigation' }, { name: 'hard-hat', label: 'Arbeit' },
+        { name: 'timer', label: 'Timer' }, { name: 'activity', label: 'Training' },
+        { name: 'moon', label: 'Schlaf' }, { name: 'settings', label: 'System' },
+        { name: 'battery-medium', label: 'Akku' }, { name: 'thermometer', label: 'Umgebung' },
+        { name: 'siren', label: 'Notruf' }, { name: 'compass', label: 'Kurs' }
+      ],
+      metrics: [
+        { k: 'Display', v: '390 × 450 px, rechteckig' },
+        { k: 'Basisraster', v: '8 px' },
+        { k: 'Seitenrand', v: '24 px' },
+        { k: 'Menüzeile', v: '66 px' },
+        { k: 'Trefferfläche minimal', v: '44 px' },
+        { k: 'Aktionsleiste', v: '68 – 72 px, bis zur Kante' },
+        { k: 'Radius', v: '0 px' },
+        { k: 'Trenner', v: '2 px' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

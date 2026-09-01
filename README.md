@@ -59,6 +59,10 @@ tools/atelier/atelier.py push de.jan.hello-0.1.0.comp --host <watch-ip>
 `atelier` is deliberately shaped to slot into an existing `release.sh`
 pipeline (pack → push, exit codes, no interactivity).
 
+## Design
+
+[`docs/design/`](docs/design/) holds a UI/UX concept for the future menu and Complication look-and-feel (watchface, list menus, health/notification/navigation/work-mode screens, design tokens). Reference for `jw.ui`'s widget layer, not yet implemented.
+
 ## Status / Roadmap
 
 Skeleton — architecture is in place, grunt work is flagged:
