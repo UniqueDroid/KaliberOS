@@ -8,6 +8,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "core/app_store.h"
@@ -93,13 +94,17 @@ esp_err_t kb_store_read_bytecode(const char *id, uint8_t **out, size_t *len) {
 
 char *kb_store_read_state(const char *id) {
     FILE *f = fopen(path_of(id, "state.json"), "rb");
-    if (!f) return NULL;
+    if (!f) {
+        ESP_LOGI(TAG, "read_state(%s): no state.json", id);
+        return NULL;
+    }
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
     char *s = malloc(sz + 1);
     if (s) { fread(s, 1, sz, f); s[sz] = 0; }
     fclose(f);
+    ESP_LOGI(TAG, "read_state(%s): %s", id, s ? s : "(alloc failed)");
     return s;
 }
 
@@ -107,6 +112,13 @@ esp_err_t kb_store_write_state(const char *id, const char *json) {
     FILE *f = fopen(path_of(id, "state.json"), "wb");
     if (!f) return ESP_FAIL;
     fputs(json, f);
+    /* Belt and suspenders: fclose() should flush LittleFS's own buffers,
+     * but this runs right before esp_deep_sleep_start() - an fsync makes
+     * sure nothing is still sitting in a lower-level cache when power
+     * effectively drops for the flash controller's purposes. */
+    fflush(f);
+    fsync(fileno(f));
     fclose(f);
+    ESP_LOGI(TAG, "write_state(%s): %s", id, json);
     return ESP_OK;
 }
