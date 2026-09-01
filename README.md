@@ -72,7 +72,7 @@ pipeline (pack → push, exit codes, no interactivity).
 
 Skeleton — architecture is in place, grunt work is flagged:
 
-- [x] **Green `idf.py -DKALIBER_BOARD=watchy_v3 build`** - not flashed yet, needs the real v3 watch connected.
+- [x] **Green `idf.py -DKALIBER_BOARD=watchy_v3 build`**, flashed and booted on a real v3 board (2026-09-01) - clean boot, `cadran_selftest()` passes on hardware, littlefs store mounts. No complication installed yet, so success criteria 1/3/4 below are still open.
 - [x] **Verify pins.h** (Watchy v3 schematic, PSRAM quad/octal!) - matches PicoWatch's production config.h exactly. PSRAM mode still needs a real check though, not covered by pins.h alone.
 - [ ] SSD1681 init sequence + blit/update in `boards/watchy_v3/board.c`
 - [ ] Font rasterizer in `modules/js_ui.c` (start with an 8×8 bitmap font)
