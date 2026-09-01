@@ -28,6 +28,12 @@ static esp_err_t disp_init(void) {
         .sclk_io_num = PIN_DISP_SCK,
         .mosi_io_num = PIN_DISP_MOSI,
         .miso_io_num = -1,
+        /* Unused quad-SPI lines must be -1, not left at the struct's
+         * zero-init default: 0 is a real GPIO (our PIN_BTN_UP!), so the
+         * driver tried to claim it too - confirmed on real hardware
+         * ("GPIO 0 is conflict with others and be overwritten"). */
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
         .max_transfer_sz = DISP_W * DISP_H / 8 + 8,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
