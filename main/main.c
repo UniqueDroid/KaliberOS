@@ -8,6 +8,7 @@
 #include "core/power_mgr.h"
 #include "core/app_store.h"
 #include "launcher/launcher.h"
+#include "cadran/cadran.h"
 
 static const char *TAG = "kaliber";
 
@@ -16,6 +17,11 @@ void app_main(void) {
     ESP_LOGI(TAG, "Kaliber on %s (engine=%d, psram=%d, deep=%d)",
              b->name, b->caps.engine, b->caps.has_psram,
              b->caps.sleep_model_deep);
+
+    /* Bring-up only: proves the Cadran loader/renderer/provider round-trip
+     * on real hardware. Remove once cadran_render() is wired into the
+     * launcher for real (roadmap step 6) - see cadran.h. */
+    cadran_selftest();
 
     ESP_ERROR_CHECK(b->power->init());
     ESP_ERROR_CHECK(b->display->init());
