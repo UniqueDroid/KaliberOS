@@ -88,14 +88,23 @@ Skeleton — architecture is in place, grunt work is flagged:
 
 1. [x] Log free heap after engine init on the target board (critical for
    v2). Real v3 numbers (2026-09-01, `hello` example, seeded via
-   `main/seed_hello.c` - see its header comment): 192132 B free heap,
-   engine using 62321 B of its 96 kB budget.
+   `main/seed_apps.c` - see its header comment): 192132 B free heap,
+   engine using 62321 B of its 96 kB budget. **Note:** that only leaves
+   ~34 kB for app objects on top of the engine's own baseline - fine for
+   `hello`, tight for a real Complication. There's headroom in free heap
+   to raise `js_heap_budget` (e.g. towards 128 kB), but don't just bump
+   it: WiFi isn't wired up yet and its stack will eat 50-70 kB of that
+   same free heap once it is. Re-measure with WiFi active before
+   changing the budget.
 2. Wake→display latency < e-ink refresh time (engine boot must never be
    the bottleneck). Not measurable yet - the SSD1681 driver is still a
    stub (`disp_blit`/`disp_update` TODO).
-3. A `while(true)` Complication gets torn down by the budget handler after
-   500 ms as a JS error — without a watchdog reset. Not tested yet -
-   `hello` has no infinite loop, needs a dedicated hostile test app.
+3. [x] A `while(true)` Complication gets torn down by the budget handler
+   after 500 ms as a JS error — without a watchdog reset. Verified on
+   real v3 hardware (2026-09-01, `examples/complications/budget-hog`):
+   aborted after ~511ms, clean `JS_ERR_TIMEOUT`, no crash. Found and
+   fixed a real bug along the way - see the engine_quickjs.c commit from
+   that date.
 4. Deep-sleep round trip: the counter in `hello` keeps counting across
    wakes. Not tested yet - needs an actual deep-sleep cycle triggered
    (idle timeout or forced).
