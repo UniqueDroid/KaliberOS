@@ -34,31 +34,37 @@ struct js_engine {
  * quickjs-ng's JSMallocFunctions hooks take a plain `void *opaque` (the
  * pointer passed as JS_NewRuntime2's second argument, unused here), not a
  * `JSMallocState *` - that type is Bellard quickjs/an older API, not
- * exposed by quickjs.h here.
+ * exposed by quickjs.h here. js_malloc_usable_size maps onto
+ * heap_caps_get_allocated_size() for exact engine memory accounting
+ * instead of falling back to the requested size.
  */
+static inline uint32_t kb_caps(void) {
+    return board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT;
+}
+
 static void *psram_calloc(void *opaque, size_t count, size_t size) {
     (void)opaque;
-    return heap_caps_calloc(count, size,
-        board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
+    return heap_caps_calloc(count, size, kb_caps());
 }
 static void *psram_malloc(void *opaque, size_t size) {
     (void)opaque;
-    return heap_caps_malloc(size,
-        board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
+    return heap_caps_malloc(size, kb_caps());
 }
 static void psram_free(void *opaque, void *ptr) { (void)opaque; heap_caps_free(ptr); }
 static void *psram_realloc(void *opaque, void *ptr, size_t size) {
     (void)opaque;
-    return heap_caps_realloc(ptr, size,
-        board_get()->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
+    return heap_caps_realloc(ptr, size, kb_caps());
+}
+static size_t psram_usable_size(const void *ptr) {
+    return ptr ? heap_caps_get_allocated_size((void *)ptr) : 0;
 }
 
 static const JSMallocFunctions kb_malloc_fns = {
-    .js_calloc  = psram_calloc,
-    .js_malloc  = psram_malloc,
-    .js_free    = psram_free,
-    .js_realloc = psram_realloc,
-    /* js_malloc_usable_size: leave NULL, QuickJS falls back safely */
+    .js_calloc             = psram_calloc,
+    .js_malloc             = psram_malloc,
+    .js_free               = psram_free,
+    .js_realloc            = psram_realloc,
+    .js_malloc_usable_size = psram_usable_size,
 };
 
 /* --------------------------------------------------- interrupt (budget) */
