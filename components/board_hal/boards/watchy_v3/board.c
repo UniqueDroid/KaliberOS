@@ -1,13 +1,18 @@
 /**
  * Watchy v3 reference board.
  *
- * Display driver: minimal SSD1681-class driver on esp_driver_spi is the
- * plan (see README); the functions below are the bring-up skeleton with
- * the SPI plumbing sketched and the panel init sequence left as TODO.
+ * Display driver: SSD1681 controller, GDEH0154D67 200x200 1bpp panel.
+ * Command sequence and timings ported from PicoWatch's Display.cpp
+ * (GxEPD2-derived, real/working on this exact panel+controller) - not
+ * guessed from the datasheet. Kept intentionally simpler than GxEPD2's
+ * partial-rect windowing: our HAL only has a whole-framebuffer
+ * blit()/update(bool full), no sub-rectangle API, so every blit sets the
+ * full RAM window.
  */
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
@@ -22,6 +27,64 @@ static const char *TAG = "board.watchy_v3";
 static spi_device_handle_t s_spi;
 
 /* ---------------------------------------------------------------- display */
+
+/* BUSY reads HIGH while the panel is busy (PicoWatch's GxEPD2_EPD ctor
+ * passes busy_level=HIGH for this exact panel). */
+#define SSD1681_BUSY_TIMEOUT_MS 2000
+
+static bool s_wrote_prev_buf; /* mirrors GxEPD2's "_initial_write" */
+
+static void ssd1681_cmd(uint8_t cmd) {
+    gpio_set_level(PIN_DISP_DC, 0);
+    spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
+    ESP_ERROR_CHECK(spi_device_polling_transmit(s_spi, &t));
+    gpio_set_level(PIN_DISP_DC, 1);
+}
+
+static void ssd1681_data(const uint8_t *data, size_t len) {
+    if (!len) return;
+    spi_transaction_t t = { .length = len * 8, .tx_buffer = data };
+    ESP_ERROR_CHECK(spi_device_polling_transmit(s_spi, &t));
+}
+
+static void ssd1681_data1(uint8_t byte) { ssd1681_data(&byte, 1); }
+
+static void ssd1681_wait_busy(const char *why) {
+    int waited = 0;
+    while (gpio_get_level(PIN_DISP_BUSY) && waited < SSD1681_BUSY_TIMEOUT_MS) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+    }
+    if (waited >= SSD1681_BUSY_TIMEOUT_MS)
+        ESP_LOGW(TAG, "%s: BUSY timeout after %dms", why, waited);
+}
+
+static void ssd1681_reset(void) {
+    gpio_set_level(PIN_DISP_RES, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(PIN_DISP_RES, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+/* Full RAM window (0,0,DISP_W,DISP_H) - see PicoWatch's
+ * _setPartialRamArea(); we only ever use the whole-panel window. */
+static void ssd1681_set_ram_window(void) {
+    ssd1681_cmd(0x11); /* data entry mode */
+    ssd1681_data1(0x03); /* x increase, y increase */
+    ssd1681_cmd(0x44); /* set RAM X address range */
+    ssd1681_data1(0);
+    ssd1681_data1((DISP_W - 1) / 8);
+    ssd1681_cmd(0x45); /* set RAM Y address range */
+    ssd1681_data1(0);
+    ssd1681_data1(0);
+    ssd1681_data1((DISP_H - 1) % 256);
+    ssd1681_data1((DISP_H - 1) / 256);
+    ssd1681_cmd(0x4e); /* set RAM X address counter */
+    ssd1681_data1(0);
+    ssd1681_cmd(0x4f); /* set RAM Y address counter */
+    ssd1681_data1(0);
+    ssd1681_data1(0);
+}
 
 static esp_err_t disp_init(void) {
     spi_bus_config_t bus = {
@@ -53,28 +116,62 @@ static esp_err_t disp_init(void) {
     io.pin_bit_mask = 1ULL << PIN_DISP_BUSY;
     io.mode = GPIO_MODE_INPUT;
     gpio_config(&io);
+    gpio_set_level(PIN_DISP_DC, 1);
 
-    /* TODO: HW reset pulse + SSD1681 init sequence (SWRESET, driver output,
-     * data entry mode, RAM window, temperature sensor, border). */
-    ESP_LOGI(TAG, "display init (panel sequence TODO)");
+    ssd1681_reset();
+
+    ssd1681_cmd(0x01); /* driver output control: MUX = DISP_H-1 lines */
+    ssd1681_data1((DISP_H - 1) & 0xff);
+    ssd1681_data1(((DISP_H - 1) >> 8) & 0xff);
+    ssd1681_data1(0x00);
+
+    ssd1681_cmd(0x18); /* use built-in temperature sensor */
+    ssd1681_data1(0x80);
+
+    ssd1681_cmd(0x3c); /* border waveform: normal (non-dark) border */
+    ssd1681_data1(0x05);
+
+    ssd1681_set_ram_window();
+    s_wrote_prev_buf = false;
+
+    ESP_LOGI(TAG, "SSD1681 init done");
     return ESP_OK;
 }
 
 static esp_err_t disp_blit(const uint8_t *fb, size_t len) {
-    (void)fb; (void)len;
-    /* TODO: 0x24 write RAM, DMA transfer of fb */
+    ssd1681_set_ram_window();
+    /* GxEPD2 also writes the "previous" buffer (0x26) once before the
+     * first real update, so the differential update the controller does
+     * internally doesn't ghost against undefined RAM content. Only
+     * needed once - later blits only touch "current" (0x24). */
+    if (!s_wrote_prev_buf) {
+        ssd1681_cmd(0x26);
+        ssd1681_data(fb, len);
+        s_wrote_prev_buf = true;
+    }
+    ssd1681_cmd(0x24);
+    ssd1681_data(fb, len);
     return ESP_OK;
 }
 
 static esp_err_t disp_update(bool full) {
-    (void)full;
-    /* TODO: 0x22 display update control (full vs partial LUT), 0x20 activate,
-     * wait BUSY */
+    /* Partial LUT assumes a full update already established a baseline
+     * image (GxEPD2's _initial_refresh forces this the same way) - the
+     * caller (launcher.c) doesn't track that, so enforce it here. */
+    static bool s_did_first_update;
+    if (!s_did_first_update) full = true;
+
+    ssd1681_cmd(0x22); /* display update control 2 */
+    ssd1681_data1(full ? 0xf4 : 0xfc); /* full vs partial LUT, see PicoWatch */
+    ssd1681_cmd(0x20); /* activate display update sequence */
+    ssd1681_wait_busy(full ? "update(full)" : "update(partial)");
+    s_did_first_update = true;
     return ESP_OK;
 }
 
 static esp_err_t disp_sleep(void) {
-    /* TODO: deep sleep mode 0x10, keep RAM if partial refresh planned */
+    ssd1681_cmd(0x10); /* deep sleep mode */
+    ssd1681_data1(0x01);
     return ESP_OK;
 }
 
