@@ -1,4 +1,4 @@
-# Kaliber
+# KaliberOS
 
 A JS app framework for ESP32 watches and devices. The *Kaliber* is the
 movement — firmware, RTOS base, and runtime. Apps are called
