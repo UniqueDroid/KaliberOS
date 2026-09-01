@@ -154,12 +154,23 @@ static esp_err_t disp_blit(const uint8_t *fb, size_t len) {
     return ESP_OK;
 }
 
+/* Partial-LUT refreshes accumulate visible ghosting (the panel only
+ * redraws changed pixels via a lighter waveform) - force a full refresh
+ * every N partials to clear it. Board-level concern (SSD1681-specific),
+ * not something a Complication should have to think about. */
+#define SSD1681_FORCE_FULL_EVERY_N_PARTIALS 10
+
 static esp_err_t disp_update(bool full) {
     /* Partial LUT assumes a full update already established a baseline
      * image (GxEPD2's _initial_refresh forces this the same way) - the
      * caller (launcher.c) doesn't track that, so enforce it here. */
     static bool s_did_first_update;
+    static int  s_partials_since_full;
     if (!s_did_first_update) full = true;
+    if (!full && ++s_partials_since_full >= SSD1681_FORCE_FULL_EVERY_N_PARTIALS) {
+        full = true;
+    }
+    if (full) s_partials_since_full = 0;
 
     ssd1681_cmd(0x22); /* display update control 2 */
     ssd1681_data1(full ? 0xf4 : 0xfc); /* full vs partial LUT, see PicoWatch */
