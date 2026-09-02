@@ -235,18 +235,28 @@ static esp_err_t input_init(void) {
 }
 
 static esp_err_t input_arm_wake(void) {
-    /* PIN_BTN_UP (GPIO0) deliberately excluded: it's also the USB auto-
-     * program strap pin. Confirmed on real hardware (02.09.2026) that
-     * this makes it fire the ext1 (level-triggered, no software debounce
-     * possible) deep-sleep wake spuriously and repeatedly - the RTC
-     * timer wake never got a chance to fire, kb_power_wake_cause()
-     * reported KB_WAKE_BUTTON on every single cycle, and the synthetic
-     * wake dispatch (launcher.c) kept incrementing hello's counter with
-     * no button ever actually pressed. Runtime debounce in btn_isr()
-     * doesn't help here - ext1 wake happens before the CPU (and its
-     * software) is even running again. UP simply isn't usable as a
-     * wake source on this board; still fine as a normal button once
-     * awake (input_init()'s NEGEDGE handler debounces that fine). */
+    /* PIN_BTN_UP (GPIO0) deliberately excluded from ext1 wake - it's
+     * also the USB auto-program strap pin, and confirmed on real
+     * hardware (02.09.2026, tested with USB connected) to fire the
+     * ext1 wake (level-triggered, in the RTC domain, evaluated before
+     * any firmware runs - btn_isr()'s software debounce can't help
+     * here, wrong layer entirely) spuriously and repeatedly: the 60s
+     * RTC timer wake never got a chance to fire, kb_power_wake_cause()
+     * reported KB_WAKE_BUTTON on every cycle, and the synthetic wake
+     * dispatch (launcher.c) kept incrementing hello's counter with no
+     * button ever pressed (explains the ~2440 phantom counts from an
+     * earlier overnight test, 01.09.2026 - not debounce-able noise,
+     * a wake loop).
+     *
+     * This is a USB-bring-up workaround, NOT a confirmed hardware
+     * limit - only tested with USB connected, which is exactly what
+     * drives the strap pin. On battery alone GPIO0 may well sit clean
+     * and UP could wake fine; untested. Upstream Watchy wakes on all
+     * four buttons including this one, using rtc_gpio_pullup_en() on
+     * GPIO0 before sleep to hold it against exactly this kind of
+     * external noise - that's the lever if UP-as-wake is wanted back
+     * later. Still fine as a normal button once the device is already
+     * awake either way (input_init()'s NEGEDGE handler, unaffected). */
     uint64_t mask = (1ULL << PIN_BTN_DOWN) |
                     (1ULL << PIN_BTN_MENU) | (1ULL << PIN_BTN_BACK);
     return esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
