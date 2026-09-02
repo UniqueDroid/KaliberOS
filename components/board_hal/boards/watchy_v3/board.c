@@ -17,6 +17,7 @@
 #include "driver/spi_master.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 
 #include "board_hal/board.h"
@@ -193,7 +194,20 @@ static const display_ops_t disp_ops = {
 
 /* ------------------------------------------------------------------ input */
 
+/* Timestamp debounce: a real press can't produce two edges closer than
+ * this, so anything faster is bounce (mechanical) or noise (GPIO 0's
+ * dual role as PIN_BTN_UP and the auto-program strap the USB-serial
+ * chip's DTR/RTS drive - confirmed spurious-triggering during repeated
+ * host-side reconnects, 01.09.2026). esp_timer_get_time() is ISR-safe. */
+#define BTN_DEBOUNCE_US (30 * 1000)
+static int64_t s_btn_last_us[KB_BTN_MAX];
+
 static void IRAM_ATTR btn_isr(void *arg) {
+    kb_button_t id = (kb_button_t)(uintptr_t)arg;
+    int64_t now = esp_timer_get_time();
+    if (now - s_btn_last_us[id] < BTN_DEBOUNCE_US) return;
+    s_btn_last_us[id] = now;
+
     event_t ev = { .type = EV_BUTTON, .arg = (uint32_t)(uintptr_t)arg };
     bool hpw = false;
     kb_bus_post_from_isr(&ev, &hpw);
@@ -217,7 +231,6 @@ static esp_err_t input_init(void) {
         gpio_isr_handler_add(map[i].pin, btn_isr,
                              (void *)(uintptr_t)map[i].id);
     }
-    /* TODO: debounce (esp_timer based, ~30 ms) */
     return ESP_OK;
 }
 

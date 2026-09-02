@@ -128,7 +128,18 @@ static void app_suspend_and_sleep(void) {
 
 /* -------------------------------------------------------------- js_task */
 
-static void dispatch(const event_t *ev) {
+/* src distinguishes the synthetic post-wake event (js_task's own call,
+ * reflecting kb_power_wake_cause()) from real bus events (button ISR,
+ * RTC timer, ...) - added to debug a suspected spurious-button-press
+ * source (GPIO 0's dual role as PIN_BTN_UP and the auto-program strap,
+ * see board.c's btn_isr comment). If a count only ever moves via
+ * "bus-event" entries, it's real button presses (or noise on that
+ * line, now debounced); if it moves via "synthetic-wake", something in
+ * the wake-cause detection itself is wrong - a real bug hiding behind
+ * what first looked like just noise. */
+static void dispatch(const event_t *ev, const char *src) {
+    ESP_LOGI(TAG, "dispatch: type=%d arg=%lu src=%s",
+             ev->type, (unsigned long)ev->arg, src);
     char json[128];
     switch (ev->type) {
     case EV_BUTTON:
@@ -170,16 +181,17 @@ static void js_task(void *arg) {
     else ESP_LOGW(TAG, "no complications installed");
 
     /* synthesize wake event so the app can react to the wake cause */
-    event_t wake = { .type = (kb_power_wake_cause() == KB_WAKE_BUTTON)
-                                 ? EV_BUTTON : EV_TICK_MINUTE };
-    dispatch(&wake);
+    kb_wake_cause_t wc = kb_power_wake_cause();
+    event_t wake = { .type = (wc == KB_WAKE_BUTTON) ? EV_BUTTON : EV_TICK_MINUTE };
+    ESP_LOGI(TAG, "wake_cause=%d", wc);
+    dispatch(&wake, "synthetic-wake");
     app_render_if_dirty();
 
     event_t ev;
     for (;;) {
         uint32_t to = L.app_ok ? js_next_timer_ms(L.eng) : UINT32_MAX;
         if (kb_bus_receive(&ev, to)) {
-            dispatch(&ev);
+            dispatch(&ev, "bus-event");
         } else if (L.app_ok) {
             js_dispatch_timers(L.eng);
         }
