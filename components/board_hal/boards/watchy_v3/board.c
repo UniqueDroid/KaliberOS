@@ -235,8 +235,19 @@ static esp_err_t input_init(void) {
 }
 
 static esp_err_t input_arm_wake(void) {
-    /* ext1 wake on any button; verify RTC-capability of chosen GPIOs */
-    uint64_t mask = (1ULL << PIN_BTN_UP) | (1ULL << PIN_BTN_DOWN) |
+    /* PIN_BTN_UP (GPIO0) deliberately excluded: it's also the USB auto-
+     * program strap pin. Confirmed on real hardware (02.09.2026) that
+     * this makes it fire the ext1 (level-triggered, no software debounce
+     * possible) deep-sleep wake spuriously and repeatedly - the RTC
+     * timer wake never got a chance to fire, kb_power_wake_cause()
+     * reported KB_WAKE_BUTTON on every single cycle, and the synthetic
+     * wake dispatch (launcher.c) kept incrementing hello's counter with
+     * no button ever actually pressed. Runtime debounce in btn_isr()
+     * doesn't help here - ext1 wake happens before the CPU (and its
+     * software) is even running again. UP simply isn't usable as a
+     * wake source on this board; still fine as a normal button once
+     * awake (input_init()'s NEGEDGE handler debounces that fine). */
+    uint64_t mask = (1ULL << PIN_BTN_DOWN) |
                     (1ULL << PIN_BTN_MENU) | (1ULL << PIN_BTN_BACK);
     return esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
