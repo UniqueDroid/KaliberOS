@@ -180,7 +180,16 @@ declarative face with no JS engine involvement at all. Suggested order:
    (`CADRAN_SELFTEST_BLIT_TO_PANEL`, off by default) - real e-ink showed
    the test rect/line/hand/text, not just a RAM pixel check.
 3. [x] provider registry (time/date/battery)
-4. serializer in firmware + `WatchFace()` global in Unruh
+4. [x] serializer in firmware + `WatchFace()` global in Unruh
+   (`components/unruh/modules/js_watchface.c`). Hardware-verified
+   2026-09-03 via `js_watchface_selftest()`: a real face.js
+   (`examples/watchfaces/simple/face.js`) calling `WatchFace({build})`,
+   serialized, engine torn down, then rendered through
+   `cadran_render()` with no engine involved - the design's core
+   promise (§1), end to end. Not wired into the launcher yet (step 6);
+   `build()`'s trigger (face.bin missing/ABI mismatch -> boot engine,
+   run build(), serialize, destroy engine) is still only exercised by
+   the self-test harness.
 5. atelier resource pipeline (dithering, digit strips)
 6. hybrid mode wiring in the launcher
 
