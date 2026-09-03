@@ -173,9 +173,13 @@ needs both) and *before* the MQuickJS backend — declarative faces reduce
 the urgency of the second engine, since v2/C6 boards can run every
 declarative face with no JS engine involvement at all. Suggested order:
 
-1. `cadran_render()` + face.bin loader (C only, hand-written test blob)
-2. widget renderers: img, text, rect/line → img_digits, arc, hand
-3. provider registry (time/date/battery)
+1. [x] `cadran_render()` + face.bin loader (C only, hand-written test blob)
+2. [x] widget renderers: rect/line/hand, text (img/img_digits/arc/img_level
+   still skipped - need the atelier resource pipeline, step 5). Hardware-
+   verified 2026-09-03 via `cadran_selftest()`'s optional panel blit
+   (`CADRAN_SELFTEST_BLIT_TO_PANEL`, off by default) - real e-ink showed
+   the test rect/line/hand/text, not just a RAM pixel check.
+3. [x] provider registry (time/date/battery)
 4. serializer in firmware + `WatchFace()` global in Unruh
 5. atelier resource pipeline (dithering, digit strips)
 6. hybrid mode wiring in the launcher
