@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 
 #include "board_hal/board.h"
 #include "core/event_bus.h"
@@ -177,6 +178,11 @@ static void js_task(void *arg) {
     (void)arg;
     const board_desc_t *b = board_get();
 
+    /* Success criterion 2 (README): wake-to-render for the engine path,
+     * counterpart to js_watchface_selftest()'s "C-path (no engine)" log -
+     * same t0-to-render-ready shape, so the two numbers are comparable. */
+    int64_t t0 = esp_timer_get_time();
+
     L.fb = heap_caps_malloc(board_fb_size(),
         b->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
     jw_ui_bind_fb(L.fb);
@@ -193,6 +199,8 @@ static void js_task(void *arg) {
     ESP_LOGI(TAG, "wake_cause=%d", wc);
     dispatch(&wake, "synthetic-wake");
     app_render_if_dirty();
+    ESP_LOGI(TAG, "engine path: wake-to-render %lld us, free heap %u B",
+             (long long)(esp_timer_get_time() - t0), (unsigned)esp_get_free_heap_size());
 
     event_t ev;
     for (;;) {

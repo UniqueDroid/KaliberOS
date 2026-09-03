@@ -72,7 +72,11 @@ pipeline (pack → push, exit codes, no interactivity).
 
 Skeleton — architecture is in place, grunt work is flagged:
 
-- [x] **Green `idf.py -DKALIBER_BOARD=watchy_v3 build`**, flashed and booted on a real v3 board (2026-09-01) - clean boot, `cadran_selftest()` passes on hardware, littlefs store mounts. No complication installed yet, so success criteria 1/3/4 below are still open.
+- [x] **Green `idf.py -DKALIBER_BOARD=watchy_v3 build`**, flashed and booted on a real v3 board (2026-09-01) - clean boot, `cadran_selftest()` passes on hardware, littlefs store mounts.
+- [x] **Milestone 1 complete**: all four success criteria below hardware-verified (2026-09-01 to 2026-09-03).
+- [x] **Cadran roadmap steps 1-4** (loader/renderer, provider registry,
+      face.bin serializer + `WatchFace()`) hardware-verified 2026-09-03 -
+      see [the design doc](docs/design/cadran-watchface-engine.md).
 - [x] **Verify pins.h** (Watchy v3 schematic, PSRAM quad/octal!) - matches PicoWatch's production config.h exactly. PSRAM mode still needs a real check though, not covered by pins.h alone.
 - [x] SSD1681 init sequence + blit/update in `boards/watchy_v3/board.c`, incl. a ghosting-mitigation full-refresh counter for partial updates.
 - [x] Font rasterizer: `components/gfx` (8×8 bitmap font, ASCII 0x20-0x7e, scale param, per-pixel bounds check), wired into `jw.ui.text()`. No dependency on `unruh`, so `cadran`'s renderer can adopt it later.
@@ -96,9 +100,21 @@ Skeleton — architecture is in place, grunt work is flagged:
    it: WiFi isn't wired up yet and its stack will eat 50-70 kB of that
    same free heap once it is. Re-measure with WiFi active before
    changing the budget.
-2. Wake→display latency < e-ink refresh time (engine boot must never be
-   the bottleneck). Not measurable yet - the SSD1681 driver is still a
-   stub (`disp_blit`/`disp_update` TODO).
+2. [x] Wake→display latency < e-ink refresh time (engine boot must never be
+   the bottleneck). Measured on real v3 hardware (2026-09-03), both paths,
+   same panel:
+   - E-ink full/partial refresh itself: ~1.4 s (`board.watchy_v3`'s
+     `disp_update()`) - the actual bottleneck on both paths, unavoidable
+     panel physics, not something either render path controls.
+   - Engine path (`hello`): wake to render-ready (engine boot + bytecode
+     load + hooks, before the blit) ~38 ms.
+   - C-only path (Cadran, `js_watchface_selftest()`): `cadran_face_load()`
+     + `cadran_render()`, no engine at all, ~0.76 ms - free heap 343 kB
+     vs. 184 kB with the engine up, confirming the ~62 kB engine cost
+     from criterion 1 lines up with a real, usable difference.
+   Criterion holds for both paths (38 ms and 0.76 ms are both far under
+   the 1.4 s panel refresh), but the C-path makes the engine's share of
+   that budget disappear rather than just fit inside it.
 3. [x] A `while(true)` Complication gets torn down by the budget handler
    after 500 ms as a JS error — without a watchdog reset. Verified on
    real v3 hardware (2026-09-01, `examples/complications/budget-hog`):

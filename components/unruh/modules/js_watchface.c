@@ -17,6 +17,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_system.h"
 #include "board_hal/board.h"
 #include "unruh/engine.h"
 #include "cadran/cadran.h"
@@ -412,6 +414,14 @@ void js_watchface_selftest(void) {
         return;
     }
 
+    /* Success criterion 2 (README): the real minute-tick path never boots
+     * the engine at all - face.bin already exists on flash by then. Timed
+     * and heap-measured right here, after js_destroy() and before
+     * anything else runs, so both numbers reflect that path in isolation,
+     * not this harness's own build()/serialize() cost above. */
+    size_t heap_no_engine = esp_get_free_heap_size();
+    int64_t t0 = esp_timer_get_time();
+
     cadran_face_t *face = NULL;
     err = cadran_face_load(face_buf, face_len, &face);
     free(face_buf);
@@ -429,6 +439,9 @@ void js_watchface_selftest(void) {
     memset(fb, 0xFF, board_fb_size());
     err = cadran_render(face, fb, b);
     bool render_ok = (err == ESP_OK);
+    int64_t render_us = esp_timer_get_time() - t0;
+    ESP_LOGI(TAG, "C-path (no engine): load+render %lld us, free heap %u B",
+             (long long)render_us, (unsigned)heap_no_engine);
 
     bool text_drew = true;
     if (render_ok && b->caps.disp_kind == DISP_EINK_1BIT) {
