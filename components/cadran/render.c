@@ -1,7 +1,10 @@
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include "esp_log.h"
 #include "cadran_internal.h"
+#include "gfx/text.h"
 
 static const char *TAG = "cadran.render";
 
@@ -63,6 +66,35 @@ static void draw_hand(uint8_t *fb, const board_desc_t *b, const cadran_widget_re
     draw_line(fb, b, w->x, w->y, x1, y1);
 }
 
+/* TEXT widget: str_ref is a format string (design doc §4, "built-in
+ * bitmap font + format string with {v}"); the first "{v}" is replaced
+ * with the bound provider's value (string as-is, i32 via snprintf). No
+ * bind_id (have_val false) leaves the format string as-is, literal - a
+ * text widget doesn't have to be bound to anything. params[0], if
+ * nonzero, is the gfx scale factor; the design doc's own widget example
+ * doesn't set one, so 0/unset defaults to scale 1. */
+static void draw_text(uint8_t *fb, const board_desc_t *b, const cadran_widget_rec_t *w,
+                       const char *fmt, bool have_val, const cadran_value_t *val) {
+    if (!fmt) return;
+    char out[64];
+    const char *ph = have_val ? strstr(fmt, "{v}") : NULL;
+    if (ph) {
+        char valstr[24];
+        if (val->is_string) {
+            strncpy(valstr, val->str, sizeof valstr - 1);
+            valstr[sizeof valstr - 1] = '\0';
+        } else {
+            snprintf(valstr, sizeof valstr, "%ld", (long)val->i32);
+        }
+        snprintf(out, sizeof out, "%.*s%s%s", (int)(ph - fmt), fmt, valstr, ph + 3);
+    } else {
+        strncpy(out, fmt, sizeof out - 1);
+        out[sizeof out - 1] = '\0';
+    }
+    int scale = w->params[0] > 0 ? w->params[0] : 1;
+    gfx_draw_text(fb, b, w->x, w->y, out, scale);
+}
+
 /* ------------------------------------------------------------- render */
 
 esp_err_t cadran_render(const cadran_face_t *face, uint8_t *fb, const board_desc_t *board) {
@@ -92,13 +124,15 @@ esp_err_t cadran_render(const cadran_face_t *face, uint8_t *fb, const board_desc
             draw_hand(fb, board, w, have_val ? val.i32 : 0);
             break;
         case CADRAN_WIDGET_TEXT:
+            draw_text(fb, board, w, cadran_face_string(face, w->str_ref), have_val, &val);
+            break;
         case CADRAN_WIDGET_IMG:
         case CADRAN_WIDGET_IMG_DIGITS:
         case CADRAN_WIDGET_ARC:
         case CADRAN_WIDGET_IMG_LEVEL:
-            /* Needs the font rasterizer / atelier resource pipeline -
-             * neither exists yet (see main README roadmap). Skip rather
-             * than fail the whole face. */
+            /* Needs the atelier resource pipeline (image assets) - not
+             * built yet (see main README roadmap). Skip rather than fail
+             * the whole face. */
             ESP_LOGD(TAG, "widget %d: type %d not renderable yet, skipped", i, w->type);
             break;
         default:

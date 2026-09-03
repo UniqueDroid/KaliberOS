@@ -75,13 +75,15 @@ void cadran_selftest(void) {
     err = cadran_render(face, fb, b);
     bool render_ok = (err == ESP_OK);
 
-    /* Confirm the RECT actually flipped pixels inside its footprint (only
-     * checked on 1bpp e-ink for now - watchy_v3 is the only board so
-     * far). */
-    bool rect_drew = true;
+    /* Confirm the RECT and TEXT widgets actually flipped pixels inside
+     * their footprint (only checked on 1bpp e-ink for now - watchy_v3 is
+     * the only board so far). Text widget 3 sits at (5,5), scale 1
+     * ("batt {v}%" is at least 4 chars wide -> footprint well inside a
+     * generous 40px scan window). */
+    bool rect_drew = true, text_drew = true;
     if (render_ok && b->caps.disp_kind == DISP_EINK_1BIT) {
-        rect_drew = false;
         size_t stride = ((size_t)b->caps.disp_w + 7) / 8;
+        rect_drew = false;
         for (int yy = 2; yy < 12 && !rect_drew; yy++) {
             for (int xx = 2; xx < 22; xx++) {
                 size_t bi = (size_t)yy * stride + (size_t)xx / 8;
@@ -89,13 +91,22 @@ void cadran_selftest(void) {
                 if (bi < board_fb_size() && !(fb[bi] & mask)) { rect_drew = true; break; }
             }
         }
+        text_drew = false;
+        for (int yy = 5; yy < 13 && !text_drew; yy++) {
+            for (int xx = 5; xx < 45; xx++) {
+                size_t bi = (size_t)yy * stride + (size_t)xx / 8;
+                uint8_t mask = 0x80 >> (xx % 8);
+                if (bi < board_fb_size() && !(fb[bi] & mask)) { text_drew = true; break; }
+            }
+        }
     }
 
-    bool pass = render_ok && rect_drew;
-    ESP_LOGI(TAG, "%s: load=ok strings=ok render=%s rect_pixels=%s",
+    bool pass = render_ok && rect_drew && text_drew;
+    ESP_LOGI(TAG, "%s: load=ok strings=ok render=%s rect_pixels=%s text_pixels=%s",
              pass ? "PASS" : "FAIL",
              render_ok ? "ok" : "failed",
-             rect_drew ? "drawn" : "MISSING");
+             rect_drew ? "drawn" : "MISSING",
+             text_drew ? "drawn" : "MISSING");
 
     free(fb);
     cadran_face_free(face);

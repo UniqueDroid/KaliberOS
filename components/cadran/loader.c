@@ -48,13 +48,22 @@ esp_err_t cadran_face_load(const uint8_t *data, size_t len, cadran_face_t **out_
 
     /* Validate every str_ref up front so the render path never has to
      * bounds-check strings itself (doc §6: "still bounds-checked
-     * defensively; it lives on writable flash"). */
+     * defensively; it lives on writable flash"). Also require a NUL
+     * within the remaining strings buffer, not just an in-range start -
+     * render.c's text widget does strstr/strncpy on this pointer, and an
+     * unterminated string would run those past the allocation. */
     for (uint8_t i = 0; i < hdr.widget_count; i++) {
         cadran_widget_rec_t w;
         memcpy(&w, widgets_ptr + (size_t)i * sizeof w, sizeof w);
-        if (w.str_ref != CADRAN_STR_NONE && w.str_ref >= strings_len) {
+        if (w.str_ref == CADRAN_STR_NONE) continue;
+        if (w.str_ref >= strings_len) {
             ESP_LOGE(TAG, "widget %d: str_ref %u out of range (strings_len=%u)",
                      i, w.str_ref, (unsigned)strings_len);
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (!memchr(strings_ptr + w.str_ref, '\0', strings_len - w.str_ref)) {
+            ESP_LOGE(TAG, "widget %d: str_ref %u not NUL-terminated within strings table",
+                     i, w.str_ref);
             return ESP_ERR_INVALID_ARG;
         }
     }
