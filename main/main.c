@@ -5,7 +5,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include <sys/stat.h>
+#include <errno.h>
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "nvs_flash.h"
 #include "board_hal/board.h"
 #include "core/event_bus.h"
 #include "core/power_mgr.h"
@@ -17,6 +21,7 @@
 static const char *TAG = "kaliber";
 
 extern void js_watchface_selftest(void);
+extern void kb_store_install_selftest(void);
 
 /* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
  * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
@@ -64,7 +69,40 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(kb_bus_init(16));
     ESP_ERROR_CHECK(b->input->init());
+
+    /* kb_store_install()'s HMAC key lives in NVS (per-device, generated on
+     * first boot - see app_store.c), needs the NVS partition initialized
+     * before anything touches it. Standard ESP-IDF idiom: a stale/wrong-
+     * version NVS partition (e.g. after a layout change) fails once with
+     * a specific error, erase-and-retry is the documented recovery, not a
+     * silent data-loss risk - there's nothing durable in NVS yet at this
+     * project stage besides that key. */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+
     ESP_ERROR_CHECK(kb_store_init());
+
+    /* DISABLED - kb_store_install() hangs on real hardware (task watchdog,
+     * confirmed as a true deadlock, not just slow: reproduces identically
+     * with the watchdog timeout raised 5s -> 30s). Isolated to a specific
+     * sequence: cJSON_ParseWithLength() + the PSA HMAC verify, immediately
+     * followed by littlefs's mkdir() - that same mkdir() on the same
+     * mount, called standalone right after kb_store_init() with nothing
+     * preceding it, completes in under 1ms. Ruled out so far: littlefs
+     * metadata corruption (reproduces on a freshly erased "apps"
+     * partition too). Not yet root-caused - needs live dual-core
+     * debugging (JTAG/OpenOCD) to see why spi_flash_disable_interrupts_
+     * caches_and_other_cpu()'s pause request to CPU1 never gets
+     * acknowledged, which a serial log alone can't show. Re-enable only
+     * after that's understood - see project chat 2026-09-03 for the full
+     * diagnostic trail (boot_capture13 through 20).
+     * kb_store_install_selftest();
+     */
+
     /* Bring-up only: see seed_apps.c. Only one at a time - the launcher
      * boots whichever app kb_store_list() returns first (readdir order),
      * so seeding two here would make the boot target unpredictable.

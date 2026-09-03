@@ -51,32 +51,18 @@ def find_compiler(env: str, names: list[str]) -> str | None:
 
 
 def compile_quickjs(src: str, out: str) -> bool:
-    """qjsc -c emits a C file; extract raw bytecode via -o with binary mode
-    if available, else fall back to the C-array parse."""
+    """-s -b emits raw bytecode directly - the same invocation used
+    throughout the project (see main/hello_bytecode.h's header comment).
+    An earlier version of this function went via 'qjsc -c' (emit a .c
+    file, parse the byte array back out) - that flag doesn't exist on the
+    quickjs-ng qjsc this project actually builds (third_party/quickjs,
+    v0.16.2); 'qjsc -c ...' just printed usage and exited 1. Found by
+    actually running this against kb_store_install(), not assumed."""
     qjsc = find_compiler("QJSC", ["qjsc"])
     if not qjsc:
         return False
-    with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as tf:
-        cfile = tf.name
-    try:
-        subprocess.run([qjsc, "-c", "-o", cfile, src], check=True)
-        data = parse_c_array(open(cfile).read())
-        with open(out, "wb") as f:
-            f.write(data)
-        return True
-    finally:
-        os.unlink(cfile)
-
-
-def parse_c_array(c_src: str) -> bytes:
-    """Extract the byte array qjsc emits (uint8_t xxx[] = {...})."""
-    start = c_src.index("{") + 1
-    end = c_src.index("}", start)
-    return bytes(
-        int(tok, 0)
-        for tok in c_src[start:end].replace("\n", " ").split(",")
-        if tok.strip()
-    )
+    subprocess.run([qjsc, "-s", "-b", "-o", out, src], check=True)
+    return True
 
 
 def compile_mquickjs(src: str, out: str) -> bool:

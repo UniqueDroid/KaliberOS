@@ -4,3 +4,7 @@ dependencies:
   # Component Registry (component name is `esp_littlefs`, package is
   # `joltwallet/littlefs`).
   joltwallet/littlefs: "^1.14"
+  # manifest.json parsing in kb_store_install(). Not built into this
+  # ESP-IDF version (no "json" component exists here at all, checked
+  # directly rather than assumed).
+  espressif/cjson: "^1.7"

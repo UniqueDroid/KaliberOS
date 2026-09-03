@@ -1,0 +1,18 @@
+menu "Kaliber core"
+
+    config KALIBER_STORE_HMAC_KEY_OVERRIDE
+        string "App-store HMAC key override (64 hex chars, empty = auto)"
+        default ""
+        help
+            Per-device HMAC-SHA256 key for verifying .comp packages
+            (kb_store_install(), see app_store.c). Empty (default): the
+            firmware reads a key from NVS, generating and logging one on
+            first boot if none exists yet - a per-device pairing-code-style
+            secret, never checked into source control.
+
+            Set this only to pre-provision a fleet of devices with a
+            shared key before flashing (build-time, becomes part of the
+            binary - do not commit a real key into sdkconfig.defaults in
+            a public repo). 64 hex characters = 32 bytes.
+
+endmenu
