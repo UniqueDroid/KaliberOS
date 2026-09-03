@@ -5,6 +5,15 @@
 
 static const char *TAG = "cadran.selftest";
 
+/* Blit the test face to the real panel, not just check pixels in RAM.
+ * Off by default - every extra e-ink refresh has a visible flicker/wear
+ * cost, not something normal boots should pay. Flip to 1 for a hardware
+ * verification pass, matching this project's track record: SPI init, the
+ * budget-timeout classification and the '1' glyph all looked correct in
+ * review and were wrong on real hardware - a log line saying "pixels
+ * drawn" isn't as trustworthy as actually seeing them. */
+#define CADRAN_SELFTEST_BLIT_TO_PANEL 0
+
 /* Hand-authored face per design doc §9 step 1: a small in-memory face.bin
  * exercising every buildable widget type (rect, line, hand) plus a text
  * widget with a str_ref, to prove the string table round-trips even
@@ -107,6 +116,14 @@ void cadran_selftest(void) {
              render_ok ? "ok" : "failed",
              rect_drew ? "drawn" : "MISSING",
              text_drew ? "drawn" : "MISSING");
+
+#if CADRAN_SELFTEST_BLIT_TO_PANEL
+    if (render_ok && b->display) {
+        esp_err_t berr = b->display->blit(fb, board_fb_size());
+        if (berr == ESP_OK) berr = b->display->update(true /* full refresh */);
+        ESP_LOGI(TAG, "blit to panel: %s", berr == ESP_OK ? "ok" : esp_err_to_name(berr));
+    }
+#endif
 
     free(fb);
     cadran_face_free(face);

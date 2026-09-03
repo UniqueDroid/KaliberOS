@@ -19,13 +19,19 @@ void app_main(void) {
              b->name, b->caps.engine, b->caps.has_psram,
              b->caps.sleep_model_deep);
 
-    /* Bring-up only: proves the Cadran loader/renderer/provider round-trip
-     * on real hardware. Remove once cadran_render() is wired into the
-     * launcher for real (roadmap step 6) - see cadran.h. */
-    cadran_selftest();
-
     ESP_ERROR_CHECK(b->power->init());
     ESP_ERROR_CHECK(b->display->init());
+
+    /* Bring-up only: proves the Cadran loader/renderer/provider round-trip
+     * on real hardware. Remove once cadran_render() is wired into the
+     * launcher for real (roadmap step 6) - see cadran.h. Must run after
+     * display->init(): it optionally blits its test framebuffer to the
+     * real panel (see selftest.c), and its own log line is otherwise the
+     * second line of app_main() - too early for the host to have the USB
+     * connection up, so it never showed in any serial capture regardless
+     * of how tight the reconnect loop on the host side was. */
+    cadran_selftest();
+
     ESP_ERROR_CHECK(kb_bus_init(16));
     ESP_ERROR_CHECK(b->input->init());
     ESP_ERROR_CHECK(kb_store_init());
