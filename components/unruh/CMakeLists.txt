@@ -14,5 +14,5 @@ idf_component_register(
     SRCS "${ENGINE_SRC}" "modules/js_ui.c"
     INCLUDE_DIRS "include"
     REQUIRES board_hal core
-    PRIV_REQUIRES quickjs   # provide as managed component or components/quickjs
+    PRIV_REQUIRES quickjs gfx   # provide as managed component or components/quickjs
 )

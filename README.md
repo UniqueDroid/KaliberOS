@@ -74,8 +74,8 @@ Skeleton — architecture is in place, grunt work is flagged:
 
 - [x] **Green `idf.py -DKALIBER_BOARD=watchy_v3 build`**, flashed and booted on a real v3 board (2026-09-01) - clean boot, `cadran_selftest()` passes on hardware, littlefs store mounts. No complication installed yet, so success criteria 1/3/4 below are still open.
 - [x] **Verify pins.h** (Watchy v3 schematic, PSRAM quad/octal!) - matches PicoWatch's production config.h exactly. PSRAM mode still needs a real check though, not covered by pins.h alone.
-- [ ] SSD1681 init sequence + blit/update in `boards/watchy_v3/board.c`
-- [ ] Font rasterizer in `modules/js_ui.c` (start with an 8×8 bitmap font)
+- [x] SSD1681 init sequence + blit/update in `boards/watchy_v3/board.c`, incl. a ghosting-mitigation full-refresh counter for partial updates.
+- [x] Font rasterizer: `components/gfx` (8×8 bitmap font, ASCII 0x20-0x7e, scale param, per-pixel bounds check), wired into `jw.ui.text()`. No dependency on `unruh`, so `cadran`'s renderer can adopt it later.
 - [ ] Timer wheel in `engine_quickjs.c` (`js_next_timer_ms` feeds the bus
       timeout — the mechanism is already wired up in the launcher)
 - [ ] `app_store`: untar, cJSON manifest, HMAC check, atomic rename
@@ -105,6 +105,10 @@ Skeleton — architecture is in place, grunt work is flagged:
    aborted after ~511ms, clean `JS_ERR_TIMEOUT`, no crash. Found and
    fixed a real bug along the way - see the engine_quickjs.c commit from
    that date.
-4. Deep-sleep round trip: the counter in `hello` keeps counting across
-   wakes. Not tested yet - needs an actual deep-sleep cycle triggered
-   (idle timeout or forced).
+4. [x] Deep-sleep round trip: the counter in `hello` keeps counting across
+   wakes. Verified on real v3 hardware (2026-09-03), on battery, 3
+   consecutive cycles: wait 15s for idle-timeout sleep, press MENU, counter
+   is exactly +1 each time. Was blocked by two bugs, both fixed first: a
+   spurious GPIO0/ext1 wake loop (GPIO0 doubles as the USB auto-program
+   strap pin) and the counter being unreadably small before the font
+   rasterizer existed.

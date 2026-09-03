@@ -15,6 +15,7 @@
 #include "board_hal/board.h"
 #include "unruh/engine.h"
 #include "quickjs.h"
+#include "gfx/text.h"
 
 static const char *TAG = "jw.ui";
 
@@ -36,15 +37,15 @@ static JSValue ui_clear(JSContext *ctx, JSValueConst t, int argc, JSValueConst *
 
 static JSValue ui_text(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv) {
     (void)t;
-    int32_t x = 0, y = 0;
-    if (argc < 3) return JS_ThrowTypeError(ctx, "text(x, y, str)");
+    int32_t x = 0, y = 0, scale = 1;
+    if (argc < 3) return JS_ThrowTypeError(ctx, "text(x, y, str, scale?)");
     JS_ToInt32(ctx, &x, argv[0]);
     JS_ToInt32(ctx, &y, argv[1]);
     const char *s = JS_ToCString(ctx, argv[2]);
     if (!s) return JS_EXCEPTION;
-    /* TODO: rasterize into s_fb with the built-in font.
-     * For bring-up, log instead of drawing: */
-    ESP_LOGI(TAG, "text(%d,%d): %s", (int)x, (int)y, s);
+    if (argc >= 4) JS_ToInt32(ctx, &scale, argv[3]);
+    if (s_fb) gfx_draw_text(s_fb, board_get(), (int)x, (int)y, s, (int)scale);
+    ESP_LOGI(TAG, "text(%d,%d) x%d: %s", (int)x, (int)y, (int)scale, s);
     JS_FreeCString(ctx, s);
     s_dirty = true;
     return JS_UNDEFINED;

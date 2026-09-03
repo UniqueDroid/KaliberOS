@@ -14,8 +14,14 @@ App({
   },
   onRender: function () {
     jw.ui.clear();
-    jw.ui.text(20, 60, "Kaliber");
-    jw.ui.text(20, 100, "wakes: " + this.count);
+    jw.ui.text(20, 20, "KALIBER", 2);
+    jw.ui.text(20, 50, "WAKES:", 1);
+    /* Full count is kept in state (onSuspend below) and never wraps; only
+     * the on-screen digits are last-two, at a size actually readable on
+     * the 200x200 panel without USB - see criterion-4 retest. */
+    var shown = this.count % 100;
+    var digits = (shown < 10 ? "0" : "") + shown;
+    jw.ui.text(52, 80, digits, 6);
   },
   onSuspend: function () {
     return { count: this.count };
