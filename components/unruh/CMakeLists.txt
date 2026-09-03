@@ -11,8 +11,12 @@ else()
 endif()
 
 idf_component_register(
-    SRCS "${ENGINE_SRC}" "modules/js_ui.c"
+    SRCS "${ENGINE_SRC}" "modules/js_ui.c" "modules/js_watchface.c"
     INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "modules"
     REQUIRES board_hal core
-    PRIV_REQUIRES quickjs gfx   # provide as managed component or components/quickjs
+    # cadran: js_watchface.c serializes into its face.bin format (face_format.h)
+    # and its self-test calls cadran_face_load()/cadran_render() - this edge
+    # goes only this direction, cadran has zero dependency back on unruh.
+    PRIV_REQUIRES quickjs gfx cadran   # provide as managed component or components/quickjs
 )

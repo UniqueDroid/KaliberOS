@@ -85,6 +85,13 @@ static bool app_boot(const char *id) {
     js_status_t st = js_load_app(L.eng, bc, bclen);
     free(bc);
     if (st != JS_OK) { app_fail("load"); return false; }
+    /* js_load_app() itself no longer requires App({...}) - it's shared
+     * with WatchFace() bytecode (js_watchface.c) - so the launcher's own
+     * App()-only contract is checked here instead. */
+    if (!js_has_app(L.eng)) {
+        ESP_LOGE(TAG, "app '%s' never called App({...})", id);
+        return false;
+    }
 
     strlcpy(L.app_id, id, sizeof L.app_id);
 

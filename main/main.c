@@ -2,6 +2,9 @@
  * Kaliber entry point. Order matters:
  * board -> bus -> store -> power -> launcher (js_task takes over).
  */
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "board_hal/board.h"
 #include "core/event_bus.h"
@@ -12,6 +15,25 @@
 #include "seed_apps.h"
 
 static const char *TAG = "kaliber";
+
+extern void js_watchface_selftest(void);
+
+/* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
+ * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
+ * main_task's own stack (CONFIG_ESP_MAIN_TASK_STACK_SIZE, 8k here). Unlike
+ * cadran_selftest() (pure C, no engine, fine on any stack), this needs a
+ * task sized like the real js_task or QuickJS's internal guard would think
+ * it has headroom main_task doesn't actually have - a real overflow, not a
+ * style nitpick. Run it on its own task, sized to match, and block until
+ * done so it can't race the launcher's own engine for heap. */
+static SemaphoreHandle_t s_wf_selftest_done;
+
+static void watchface_selftest_task(void *arg) {
+    (void)arg;
+    js_watchface_selftest();
+    xSemaphoreGive(s_wf_selftest_done);
+    vTaskDelete(NULL);
+}
 
 void app_main(void) {
     const board_desc_t *b = board_get();
@@ -31,6 +53,14 @@ void app_main(void) {
      * connection up, so it never showed in any serial capture regardless
      * of how tight the reconnect loop on the host side was. */
     cadran_selftest();
+
+    /* Bring-up only, same rationale, see watchface_selftest_task() above -
+     * proves the WatchFace()/serializer/loader/renderer round trip. Remove
+     * alongside cadran_selftest() at roadmap step 6. */
+    s_wf_selftest_done = xSemaphoreCreateBinary();
+    xTaskCreate(watchface_selftest_task, "wf_selftest", b->caps.js_task_stack, NULL, 5, NULL);
+    xSemaphoreTake(s_wf_selftest_done, portMAX_DELAY);
+    vSemaphoreDelete(s_wf_selftest_done);
 
     ESP_ERROR_CHECK(kb_bus_init(16));
     ESP_ERROR_CHECK(b->input->init());

@@ -55,9 +55,15 @@ void         js_destroy(js_engine_t *e);
 /* Register a native module before loading the app. */
 js_status_t  js_register_module(js_engine_t *e, const js_module_def_t *def);
 
-/* Load and evaluate app bytecode. The app calls the global App({...}),
- * which the backend provides, storing the lifecycle object. */
+/* Load and evaluate app bytecode. Does NOT require the global App({...})
+ * to have been called - other lifecycle globals exist (WatchFace(...), see
+ * js_watchface.c) and share this same load path. Callers that specifically
+ * need App() (the launcher's own App()-based apps) must check js_has_app()
+ * themselves right after. */
 js_status_t  js_load_app(js_engine_t *e, const uint8_t *bytecode, size_t len);
+
+/* True if the loaded bytecode called the global App({...}). */
+bool         js_has_app(js_engine_t *e);
 
 /* Invoke a lifecycle hook. json_arg may be NULL. For ON_SUSPEND, *out_json
  * receives a malloc'd state string (caller frees), else out_json is NULL. */

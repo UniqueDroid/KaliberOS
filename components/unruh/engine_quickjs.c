@@ -151,10 +151,11 @@ js_status_t js_load_app(js_engine_t *e, const uint8_t *bytecode, size_t len) {
     JSValue ret = JS_EvalFunction(e->ctx, obj);  /* consumes obj */
     if (JS_IsException(ret)) goto exc;
     JS_FreeValue(e->ctx, ret);
-    if (!JS_IsObject(e->app_obj)) {
-        snprintf(e->err, sizeof e->err, "app never called App({...})");
-        return JS_ERR_BYTECODE;
-    }
+    /* Whether bytecode is expected to have called App({...}) is the
+     * caller's business, not this function's - WatchFace({...}) bytecode
+     * (js_watchface.c) is loaded through the same path and legitimately
+     * never touches e->app_obj. The launcher checks js_has_app() itself
+     * right after this call for its own App()-only contract. */
     return JS_OK;
 exc: {
         JSValue x = JS_GetException(e->ctx);
@@ -246,6 +247,12 @@ uint32_t    js_next_timer_ms(js_engine_t *e) { (void)e; return UINT32_MAX; }
 js_status_t js_dispatch_timers(js_engine_t *e) { (void)e; return JS_OK; }
 
 const char *js_last_error(js_engine_t *e) { return e->err; }
+
+/* Whether the loaded bytecode called the global App({...}) - the
+ * launcher's own contract, checked right after js_load_app(). Not every
+ * consumer of js_load_app() needs this (see its comment) - WatchFace()
+ * bytecode has the equivalent check on its own object in js_watchface.c. */
+bool js_has_app(js_engine_t *e) { return JS_IsObject(e->app_obj); }
 
 size_t js_mem_used(js_engine_t *e) {
     JSMemoryUsage u;
