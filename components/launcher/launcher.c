@@ -21,6 +21,7 @@
 #include "core/app_store.h"
 #include "unruh/engine.h"
 #include "launcher/launcher.h"
+#include "gfx/text.h"
 
 static const char *TAG = "launcher";
 
@@ -190,8 +191,24 @@ static void js_task(void *arg) {
     /* TODO: choose current app (NVS "last app", else first watchface). */
     char ids[4][KB_APP_ID_MAX];
     int n = kb_store_list(ids, 4);
-    if (n > 0) app_boot(ids[0]);
-    else ESP_LOGW(TAG, "no complications installed");
+    if (n > 0) {
+        app_boot(ids[0]);
+    } else {
+        /* Genuine empty state (project chat 2026-09-04: seed_apps.c, the
+         * bring-up hack that always guaranteed at least one app, is gone
+         * now that a real install path exists) - draw something instead
+         * of leaving whatever was on the panel before, same no-engine "C
+         * path" cadran_selftest()/net_svc's sync screen use. Not a
+         * crash, not silent: kb_bus_receive()'s UINT32_MAX wait below
+         * (app_ok stays false) is a real, intentional idle state, not a
+         * missing-app bug. */
+        ESP_LOGW(TAG, "no complications installed");
+        memset(L.fb, 0xFF, board_fb_size());
+        gfx_draw_text(L.fb, b, 10, 80, "NO APPS", 2);
+        gfx_draw_text(L.fb, b, 10, 110, "atelier push to install", 1);
+        b->display->blit(L.fb, board_fb_size());
+        b->display->update(true);
+    }
 
     /* synthesize wake event so the app can react to the wake cause */
     kb_wake_cause_t wc = kb_power_wake_cause();
