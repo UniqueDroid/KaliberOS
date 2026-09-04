@@ -29,6 +29,41 @@ the launcher's single `L.fb = heap_caps_malloc(board_fb_size(), ...)`,
 `components/unruh/modules/js_ui.c` writes into one `s_fb` at
 board-absolute coordinates).
 
+### 1a. Does the rest of the budget fit? (QuickJS vs. MQuickJS on the C6)
+
+Worth answering before the port starts, not after: the ESP32-C6 is also
+512 kB SRAM with no PSRAM - the *same memory class* as the ESP32-S3
+Watchy runs on (`board.c`'s own `has_psram = false` comment). That means
+the measured WiFi (~52 kB) and QuickJS baseline (~62 kB of a 96 kB
+budget) numbers from §1 aren't just a same-order-of-magnitude guess for
+the C6, they're from a chip with the same total SRAM budget - the
+closest real data point available before a C6 board exists to measure
+directly.
+
+Summed against the stripe buffer this design settles on (§4, 26 kB at
+`stripe_lines=32`): WiFi 52 kB + QuickJS baseline 62 kB + stripe 26 kB =
+140 kB, against Watchy's own measured ~323 kB free heap at the
+equivalent point in boot (`net_svc.c`'s "sync mode: entering" log,
+before WiFi/engine are up) - leaving roughly 180 kB for actual app
+objects, system/task-stack overhead, and littlefs buffers. That's *more*
+headroom than Watchy's own README-documented number for the same
+question (~34 kB left for app objects after its 62 kB engine baseline),
+not less - the arithmetic favors QuickJS, not MQuickJS, on paper.
+
+"On paper" is doing real work in that sentence, though: this reuses
+Watchy's numbers as a proxy on a different SoC with its own ROM/system
+reservations, cache configuration, and WiFi driver footprint (RISC-V vs.
+Xtensa, different `esp_wifi` internals per target) - not a substitute
+for a real measurement. Practical answer: **start the C6 board with
+QuickJS** (the arithmetic supports it and it avoids maintaining a second
+engine backend before it's proven necessary), but treat "log free heap
+after `esp_wifi_init()` + engine init, on real C6 hardware, the same way
+criterion 1 measured it on Watchy" as an early **go/no-go gate in the
+board bring-up sequence (§8 step 3)** - before building out app-level
+functionality on top, not after. If the real number doesn't hold up,
+`engine_mqjs.c` (already on the roadmap, just not built yet) is the
+documented fallback, not a redesign.
+
 ## 2. Design goal and the measuring stick
 
 One rendering surface, striped into horizontal bands the C6 can hold in
@@ -192,6 +227,22 @@ overlap pay only for the pixels the per-pixel clip lets through. For
 Watchy (one stripe, `n_stripes=1`), this is exactly today's single
 `cadran_render()` call.
 
+The flat-list traversal being cheap doesn't extend to what a widget
+*does* once it overlaps a stripe: `rect`/`line`/`hand`/`text` are pure
+compute today, but `img`/`img_digits`/`arc`/`img_level` (currently
+parsed-but-skipped, pending the atelier resource pipeline - roadmap
+§9 step 5 of the Cadran doc) will read pixel data from flash/littlefs.
+Loading a whole image asset fresh on every stripe that overlaps it (up
+to 16× on the C6) is real, avoidable I/O cost. When that pipeline lands,
+resource widgets need to read only the row range `[origin_y,
+origin_y+height)` of their own asset per stripe (a seek + bounded read,
+the same "never buffer more than the current stripe" discipline
+`net_svc.c`/`app_store.c` already use for install-time I/O - see their
+module comments), not decode/load the whole image once per stripe. Not
+this doc's problem to solve (the resource pipeline doesn't exist yet),
+but worth flagging now so whoever builds it doesn't have to rediscover
+the constraint.
+
 ## 6. `jw.ui` / imperative apps
 
 This is the real design question, not a mechanical follow-on from §5 -
@@ -255,6 +306,27 @@ criterion 2: 0.76 ms without engine, vs. 38 ms wake-to-render with).
 budget - but this is a real open number to actually measure once a C6
 prototype exists, not something to assume from this doc.
 
+**The time budget must be tracked per render pass, not per call.**
+`js_call_hook()` (`components/unruh/engine_quickjs.c`) gives every call
+its own fresh `hook_budget_ms` deadline (`e->hook_deadline_us =
+esp_timer_get_time() + hook_budget_ms * 1000`, reset at the top of every
+call) - correct for a single `onRender()` invocation, but naively
+calling it once per stripe means a hung app gets `hook_budget_ms` **per
+stripe**, not per frame: 16 stripes × the existing 500 ms default
+(README success criterion 3's measured value) is an 8 s worst case
+before the launcher gives up, not the half-second an app author or a
+device owner would reasonably expect. `js_call_hook()`'s per-call
+deadline stays exactly as it is (still a real backstop if one single
+stripe's call hangs forever) - the launcher's stripe loop adds an outer
+ceiling on top: track wall-clock time from the *first* stripe's
+`onRender()` call, and if the cumulative elapsed time across the calls
+made so far exceeds `hook_budget_ms`, stop issuing further stripes for
+this frame and fail the app the same way a single over-budget hook does
+today (`app_fail("render")`) - a partially-rendered frame from an app
+that was already over budget is an acceptable, already-failing outcome,
+an 8 s hang is not. For Watchy (one stripe), this outer ceiling and the
+existing per-call one are the same check, so nothing changes there.
+
 **Escape hatch:** a manifest field (`"render": "single-buffer"`) lets an
 app opt out and get one call against a full-panel buffer, on boards
 where that fits - explicit trade-off the app author accepts, not a
@@ -294,5 +366,10 @@ stress test for the HAL"). Suggested order once this doc is agreed:
    before a striped board exists to test against for real.
 3. `boards/waveshare_c6_amoled/`: CO5300 driver, `stripe_lines=32` (or
    whatever the real hardware profiling in §6 says), touch/PMIC/RTC.
+   **Go/no-go gate, before building app-level functionality on top**:
+   log free heap after `esp_wifi_init()` + engine init the same way
+   criterion 1 measured it on Watchy (§1a) - confirms QuickJS fits or
+   triggers the `engine_mqjs.c` fallback while the board is still small
+   enough to change course cheaply.
 4. The actual hardware test this was always for: does the same
    Complication - unmodified - render correctly on both boards.
