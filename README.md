@@ -86,6 +86,7 @@ pre-provisioned).
 - a UI/UX concept for the future menu and Complication look-and-feel (watchface, list menus, health/notification/navigation/work-mode screens, design tokens) — reference for `jw.ui`'s widget layer.
 - [Cadran](docs/design/cadran-watchface-engine.md), the planned `components/cadran/` declarative watchface renderer — minute ticks render in pure C from a serialized widget tree, no JS engine boot required. Slots in after the SSD1681 driver and font rasterizer, before MQuickJS.
 - [Display regions](docs/design/display-regions.md), a striped rendering model for panels that don't fit a full framebuffer in RAM (the second board's 410×502 RGB565 AMOLED needs ~402 kB for one frame against 512 kB total SRAM, no PSRAM). Blocks `boards/waveshare_c6_amoled/`.
+- [Launcher states](docs/design/launcher-states.md), the watchface/menu/app model above Cadran — today's launcher just boots the first installed app. Priority: before the second board.
 
 ## Status / Roadmap
 
