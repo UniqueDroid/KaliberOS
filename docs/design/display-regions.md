@@ -119,7 +119,9 @@ Watchy v3's `board.c` maps directly:
 
 Net effect on `board.c`: three functions rename (`disp_blit` and
 `disp_update`'s signatures gain/lose parameters that are unused on this
-board), zero logic changes. That's the measuring stick from §2, met.
+board when `stripe_lines` is 0), otherwise unchanged. That's the
+measuring stick from §2, met - confirmed by actually striping this exact
+board (below), not just by argument.
 
 A striped board's `begin_frame`/`blit_region`/`end_frame` depend on its
 real controller (CO5300, out of scope - §8) but the shape is: accumulate
@@ -128,6 +130,29 @@ controller needs per region (a column/row address-window command
 sequence is the common case for QSPI/MIPI panel controllers), and
 `end_frame()` is either a no-op (controllers that auto-commit per write)
 or the actual "flip" command.
+
+**A real bug this exact concern predicts, found on real Watchy hardware
+(2026-09-04):** setting `stripe_lines=50` as a smoke test (4 real
+regions, on a board whose display driver was already trusted, before any
+new SoC/controller/framework path could be entangled with it on the
+C6) found that `ssd1681_set_ram_window()` hardcoded the panel's Y
+address range *and* Y address counter to 0 - every `blit_region()` call
+after the first wrote to the same physical rows regardless of its real
+`y`, so later stripes silently overwrote earlier ones instead of landing
+at their own offset. `stripe_lines=0` never exercised this (the one
+call's `y` is always 0, so the bug was invisible), which is exactly why
+this smoke test - not just the design argument above - was worth
+running before a second controller could confuse "region path is wrong"
+with "new panel driver is wrong." Symptom was not a crash: a plausible-
+looking but wrong image (stale content from a previous full-panel write
+sitting in rows the new, buggy code never actually touched), the kind of
+failure that "looks right" on a quick glance - verified past that with
+per-region markers naming their own real origin, not just "the image
+looks okay again." Fixed: the Y range (`0x45`) and Y counter (`0x4F`)
+commands both take the region's real `y`/`h` now, not a hardcoded 0. Any
+board's real display driver needs to make the same check - a region API
+existing is not proof its address-window plumbing actually uses the
+region it's given.
 
 ## 4. Stripe buffer ownership
 

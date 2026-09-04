@@ -67,24 +67,32 @@ static void ssd1681_reset(void) {
     vTaskDelay(pdMS_TO_TICKS(10));
 }
 
-/* Full RAM window (0,0,DISP_W,DISP_H) - see PicoWatch's
- * _setPartialRamArea(); we only ever use the whole-panel window. */
-static void ssd1681_set_ram_window(void) {
+/* RAM window [y, y+h-1] rows, full X range - see PicoWatch's
+ * _setPartialRamArea(). Region API (docs/design/display-regions.md):
+ * a real bug, not a proxy for one, found via the stripe_lines=50 smoke
+ * test on this exact board (project chat 2026-09-04) - this used to
+ * hardcode the Y range/counter to 0 unconditionally, so every
+ * blit_region() call after the first one (whatever its real y) wrote
+ * to the SAME physical rows 0..h-1, overwriting each other instead of
+ * landing at their intended offset. y/h now flow through from the
+ * caller for real. stripe_lines=0 (every board today) always calls
+ * this with y=0, h=DISP_H - unchanged from before this bug existed. */
+static void ssd1681_set_ram_window(int y, int h) {
     ssd1681_cmd(0x11); /* data entry mode */
     ssd1681_data1(0x03); /* x increase, y increase */
     ssd1681_cmd(0x44); /* set RAM X address range */
     ssd1681_data1(0);
     ssd1681_data1((DISP_W - 1) / 8);
     ssd1681_cmd(0x45); /* set RAM Y address range */
-    ssd1681_data1(0);
-    ssd1681_data1(0);
-    ssd1681_data1((DISP_H - 1) % 256);
-    ssd1681_data1((DISP_H - 1) / 256);
+    ssd1681_data1(y & 0xff);
+    ssd1681_data1((y >> 8) & 0xff);
+    ssd1681_data1((y + h - 1) & 0xff);
+    ssd1681_data1(((y + h - 1) >> 8) & 0xff);
     ssd1681_cmd(0x4e); /* set RAM X address counter */
     ssd1681_data1(0);
     ssd1681_cmd(0x4f); /* set RAM Y address counter */
-    ssd1681_data1(0);
-    ssd1681_data1(0);
+    ssd1681_data1(y & 0xff);
+    ssd1681_data1((y >> 8) & 0xff);
 }
 
 static esp_err_t disp_init(void) {
@@ -132,7 +140,7 @@ static esp_err_t disp_init(void) {
     ssd1681_cmd(0x3c); /* border waveform: normal (non-dark) border */
     ssd1681_data1(0x05);
 
-    ssd1681_set_ram_window();
+    ssd1681_set_ram_window(0, DISP_H);
     s_wrote_prev_buf = false;
 
     ESP_LOGI(TAG, "SSD1681 init done");
@@ -141,20 +149,26 @@ static esp_err_t disp_init(void) {
 
 /* Region API (docs/design/display-regions.md): stripe_lines=0 means the
  * launcher only ever calls this once, with (x,y)=(0,0) and (w,h) the
- * whole panel - x/y/w unused below, same body as the old blit(fb, len)
- * unchanged, just deriving len from h instead of taking it directly. */
+ * whole panel - x unused below (this panel only ever gets the full row
+ * width, no horizontal regions). */
 static esp_err_t disp_blit_region(int x, int y, int w, int h, const uint8_t *buf) {
-    (void)x; (void)y; (void)w;
+    (void)x; (void)w;
     size_t len = (size_t)DISP_W * (size_t)h / 8;
-    ssd1681_set_ram_window();
+    ssd1681_set_ram_window(y, h);
     /* GxEPD2 also writes the "previous" buffer (0x26) once before the
      * first real update, so the differential update the controller does
-     * internally doesn't ghost against undefined RAM content. Only
-     * needed once - later blits only touch "current" (0x24). */
+     * internally doesn't ghost against undefined RAM content - needed
+     * once per *frame* (every region of it), not once ever: s_wrote_
+     * prev_buf only flips true in end_frame(), after the whole first
+     * frame's regions are done, so on a striped board every stripe
+     * still gets its 0x26 write during that first frame, not just the
+     * first one - otherwise stripes 2..N would establish no baseline of
+     * their own and the panel's own differential logic would have
+     * nothing defined to diff a later partial update against for those
+     * rows specifically. */
     if (!s_wrote_prev_buf) {
         ssd1681_cmd(0x26);
         ssd1681_data(buf, len);
-        s_wrote_prev_buf = true;
     }
     ssd1681_cmd(0x24);
     ssd1681_data(buf, len);
@@ -186,6 +200,10 @@ static esp_err_t disp_end_frame(bool full) {
     ssd1681_cmd(0x20); /* activate display update sequence */
     ssd1681_wait_busy(full ? "update(full)" : "update(partial)");
     s_did_first_update = true;
+    /* See disp_blit_region()'s comment - flips only here, once the whole
+     * first frame's regions (however many stripes that was) are done,
+     * not after the first individual blit_region() call. */
+    s_wrote_prev_buf = true;
     return ESP_OK;
 }
 
@@ -350,7 +368,12 @@ static const board_desc_t desc = {
         .disp_h           = DISP_H,
         .disp_kind        = DISP_EINK_1BIT,
         .sleep_model_deep = true,
-        .stripe_lines     = 0, /* one stripe covers the whole panel - see board.h */
+        /* One stripe covers the whole panel - see board.h. A temporary
+         * stripe_lines=50 smoke test (project chat 2026-09-04, Simon's
+         * request) on this exact board caught a real bug in
+         * ssd1681_set_ram_window() before it ever reached the C6 (see
+         * its comment) - back to the real value now that it's fixed. */
+        .stripe_lines     = 0,
     },
 };
 
