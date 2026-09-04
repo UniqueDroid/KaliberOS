@@ -66,6 +66,12 @@ typedef struct {
     /* Board-specific teardown immediately before esp_deep_sleep_start(). */
     esp_err_t (*sleep_prepare)(void);
     uint32_t (*battery_mv)(void);
+    /* Optional (may be NULL) - true if USB VBUS is currently present.
+     * Used to decide whether to enter net_svc's sync mode on wake, not
+     * wired as a deep-sleep wake source itself (see watchy_v3/board.c's
+     * comment on why: GPIO0/PIN_BTN_UP already burned this project once
+     * on exactly that kind of assumption). */
+    bool (*usb_connected)(void);
 } power_ops_t;
 
 /* ------------------------------------------------------------ description */

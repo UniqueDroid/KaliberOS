@@ -43,8 +43,13 @@ typedef struct {
 
 esp_err_t kb_store_init(void);
 
-/* Install a .comp package from a memory buffer (e.g. HTTP upload). */
-esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID_MAX]);
+/* Install a .comp package already staged as a file (e.g. net_svc.c
+ * streams an HTTP upload straight to one). Path, not a memory buffer -
+ * a package can run to hundreds of KB once it carries real bytecode plus
+ * resources, more than comfortably fits in RAM alongside WiFi's own
+ * 50-70 kB stack; every step inside works off file offsets and small
+ * fixed-size chunks instead. */
+esp_err_t kb_store_install(const char *pkg_path, char out_id[KB_APP_ID_MAX]);
 
 esp_err_t kb_store_remove(const char *id);
 

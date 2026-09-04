@@ -64,11 +64,20 @@ idf.py -DKALIBER_BOARD=watchy_v3 build flash monitor
 ```sh
 export QJSC=/path/to/qjsc          # must match the firmware's QuickJS version!
 tools/atelier/atelier.py pack examples/complications/hello --key <hexkey>
-tools/atelier/atelier.py push de.jan.hello-0.1.0.comp --host <watch-ip>
+tools/atelier/atelier.py push de.jan.hello-0.1.0.comp --host <watch-ip> --port 8080
 ```
 
 `atelier` is deliberately shaped to slot into an existing `release.sh`
 pipeline (pack → push, exit codes, no interactivity).
+
+`push` needs the watch to actually be listening: plug it into USB - that's
+`net_svc.c`'s sync-mode trigger (see `board_hal`'s `usb_connected()`), no
+button combo or menu yet - and the panel shows a SSID/password/IP screen
+for `KALIBER_NET_SYNC_TIMEOUT_S` (120s default) or until the endpoint
+gets a request, whichever comes first. `--key` must match the device's
+own HMAC key (`get_hmac_key()` in `app_store.c` - generated into NVS on
+first boot and logged once, or `KALIBER_STORE_HMAC_KEY_OVERRIDE` if
+pre-provisioned).
 
 ## Design
 
@@ -95,7 +104,9 @@ Skeleton — architecture is in place, grunt work is flagged:
       rename - hardware-verified 2026-09-04, incl. a real mkdir()/littlefs
       hang traced to a caller-side stack overflow (10 KB local on an 8 KB
       task stack), not app_store itself.
-- [ ] Sync endpoint (`net_svc.c`): WiFi on demand + `POST /install`
+- [x] Sync endpoint (`net_svc.c`): WiFi-on-demand SoftAP + streamed
+      `POST /install` - hardware-verified 2026-09-04, real end-to-end
+      `atelier push` against the running watch, no reflash.
 - [ ] MQuickJS backend (`engine_mqjs.c`) → unlocks v2/C6 boards
 - [ ] Second board: `waveshare_c6_amoled` (MQuickJS, RGB565, always-on)
       as a stress test for the HAL

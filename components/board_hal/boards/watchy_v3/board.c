@@ -270,6 +270,11 @@ static const input_ops_t input_ops = {
 
 static esp_err_t power_init(void) {
     /* TODO: ADC oneshot unit for PIN_BATT_ADC, calibration */
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << PIN_USB_DET,
+        .mode = GPIO_MODE_INPUT,
+    };
+    gpio_config(&io);
     return ESP_OK;
 }
 
@@ -295,9 +300,23 @@ static uint32_t power_battery_mv(void) {
     return 0;
 }
 
+/* UNVERIFIED polarity (2026-09-04) - active-HIGH is the common convention
+ * for a VBUS-sense divider (5V present -> pin driven high), but unlike
+ * every other pin in this file this one hasn't been cross-checked against
+ * PicoWatch's real firmware yet. Getting this backwards is exactly the
+ * button-polarity mistake this project already made once - confirm on
+ * real hardware (or against PicoWatch's USB-detect code, if it has any)
+ * before relying on this for anything more than net_svc's sync-mode
+ * trigger, where a wrong read just means sync mode doesn't start/stop
+ * when expected, not silent data loss. */
+static bool power_usb_connected(void) {
+    return gpio_get_level(PIN_USB_DET) != 0;
+}
+
 static const power_ops_t power_ops = {
     .init = power_init, .wake_cause = power_wake_cause,
     .sleep_prepare = power_sleep_prepare, .battery_mv = power_battery_mv,
+    .usb_connected = power_usb_connected,
 };
 
 /* ------------------------------------------------------------ descriptor */

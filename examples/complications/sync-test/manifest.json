@@ -1,0 +1,7 @@
+{
+  "id": "de.jan.sync-test",
+  "version": "0.1.0",
+  "type": "watchface",
+  "permissions": [],
+  "requires": { "display": "any", "engine": "any" }
+}

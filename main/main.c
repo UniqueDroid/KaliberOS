@@ -18,12 +18,13 @@
 #include "core/app_store.h"
 #include "launcher/launcher.h"
 #include "cadran/cadran.h"
+#include "net_svc/net_svc.h"
 #include "seed_apps.h"
 
 static const char *TAG = "kaliber";
 
 extern void js_watchface_selftest(void);
-extern void kb_store_install_selftest(void);
+extern unsigned kb_store_install_selftest(void);
 
 /* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
  * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
@@ -94,8 +95,16 @@ void app_main(void) {
      * kb_store_install() was traced down to a 10 KB stack array in this
      * selftest's own tamper test (see app_store.c) - fixed there, safe
      * to call unconditionally now. Remove alongside the other bring-up
-     * selftests once net_svc.c exercises this path for real. */
-    kb_store_install_selftest();
+     * selftests once net_svc.c has exercised the real path a few times
+     * on hardware (below, gated on USB - not yet on every boot).
+     *
+     * Verdict captured and re-logged after the sync-mode block below, not
+     * just here - this runs at ~1s into boot, squarely inside the ~15s
+     * post-USB-reset window this project's serial capture setup has never
+     * reliably caught (project chat, all session); re-emitting it once
+     * WiFi has had time to come up gives it a second, much later chance
+     * to land in whatever capture is actually running. */
+    unsigned store_selftest_bits = kb_store_install_selftest();
 
     /* Bring-up only: see seed_apps.c. Only one at a time - the launcher
      * boots whichever app kb_store_list() returns first (readdir order),
@@ -107,6 +116,35 @@ void app_main(void) {
 
     kb_power_cfg_t pcfg = { .idle_timeout_ms = 15000, .tick_interval_s = 60 };
     ESP_ERROR_CHECK(kb_power_init(&pcfg));
+
+    /* Sync mode trigger (project chat 2026-09-04): checked once per wake,
+     * not wired as a deep-sleep wake source - that's exactly the kind of
+     * change that already cost this project a real bug once (GPIO0/
+     * PIN_BTN_UP's spurious ext1 wake, see board.c's input_arm_wake()).
+     * While plugged in, every wake opens one sync-mode window before the
+     * normal render path runs; unplugging (or timing out) falls straight
+     * through to kb_launcher_start() below either way, so a watch left
+     * plugged in overnight doesn't get stuck - it just spends each wake's
+     * first KALIBER_NET_SYNC_TIMEOUT_S seconds with the endpoint open. */
+    if (b->power->usb_connected && b->power->usb_connected()) {
+        ESP_LOGI(TAG, "USB connected - entering sync mode before normal render");
+        kb_net_svc_run_sync_mode();
+    }
+
+    /* Deliberately after the sync-mode block, not right where the selftest
+     * itself ran (see the comment above kb_store_install_selftest()'s call
+     * site) - by now enough real time has passed that this line reliably
+     * lands in whatever host-side capture is running. */
+    /* Bitmask, not just pass/fail (project chat 2026-09-04: a bare bool
+     * here cost a whole extra flash/test cycle to find out WHICH check
+     * failed, since app_store.c's own detailed line runs too early to
+     * reliably capture) - bit 0 install, 1 listed, 2 manifest, 3
+     * bytecode, 4 tamper-rejected; see app_store.c's KB_STORE_SELFTEST_*. */
+    ESP_LOGI(TAG, "store selftest: %s (bits=0x%02x: install=%d listed=%d manifest=%d bytecode=%d tamper=%d)",
+             store_selftest_bits == 0x1F ? "PASS" : "FAIL", store_selftest_bits,
+             (store_selftest_bits >> 0) & 1, (store_selftest_bits >> 1) & 1,
+             (store_selftest_bits >> 2) & 1, (store_selftest_bits >> 3) & 1,
+             (store_selftest_bits >> 4) & 1);
 
     ESP_ERROR_CHECK(kb_launcher_start());
     /* app_main returns; FreeRTOS keeps running our tasks. */

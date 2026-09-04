@@ -19,6 +19,15 @@
  * via Kconfig (KALIBER_STORE_HMAC_KEY_OVERRIDE) only for pre-provisioning
  * a fleet with a shared key before flashing - not for casual use.
  *
+ * kb_store_install() takes a *path* to the package, not a memory buffer
+ * (project chat 2026-09-04, ahead of net_svc.c): a .comp can run to
+ * hundreds of KB once it carries real bytecode plus resources, which
+ * doesn't fit comfortably in RAM once WiFi's own 50-70 kB stack is also
+ * resident. Every step below - tar scan, HMAC verify, staging writes -
+ * works off file offsets and small fixed-size chunk buffers, never a
+ * buffer sized to the whole package or even a whole entry. net_svc.c
+ * streams the HTTP request body straight to this same kind of path.
+ *
  * Install unpacks (post-verification) into /apps/.staging/<id>, validates
  * the manifest, then swaps it into place over /apps/<id>.
  */
@@ -48,6 +57,11 @@ static const char *TAG = "store";
 #define ROOT "/apps"
 #define STAGING ROOT "/.staging"
 
+/* Every file-to-file/file-to-crypto copy in this file moves data through a
+ * buffer this size, never anything sized to a whole entry or package -
+ * see the module comment. */
+#define CHUNK_SIZE 256
+
 esp_err_t kb_store_init(void) {
     esp_vfs_littlefs_conf_t conf = {
         .base_path = ROOT,
@@ -68,11 +82,13 @@ esp_err_t kb_store_init(void) {
 
 /* Minimal USTAR reader: only what atelier's flat, uncompressed packages
  * need (regular files at the top level, no long-name/long-link extension
- * headers, no subdirectories). Not a general tar implementation. */
+ * headers, no subdirectories). Not a general tar implementation. Works
+ * off a FILE* + byte offsets, not a memory buffer - only ever reads one
+ * 512-byte header at a time, seeking past entry data without touching it. */
 typedef struct {
-    char           name[101];
-    size_t         size;
-    const uint8_t *data;
+    char   name[101];
+    size_t size;
+    size_t offset;   /* absolute byte offset of this entry's data in the file */
 } tar_entry_t;
 
 static size_t oct_to_size(const char *field, size_t len) {
@@ -84,14 +100,19 @@ static size_t oct_to_size(const char *field, size_t len) {
     return v;
 }
 
-/* Parses pkg into entries[], up to max entries. Returns count, or -1 on a
- * structurally broken tar (used defensively - this buffer came over
- * HTTP/serial, not from a trusted local build). */
-static int tar_parse(const uint8_t *pkg, size_t len, tar_entry_t *entries, int max) {
+/* Parses the tar at f (total length len) into entries[], up to max
+ * entries. Returns count, or -1 on a structurally broken tar (used
+ * defensively - this file came over HTTP/serial, not from a trusted
+ * local build). */
+static int tar_parse(FILE *f, size_t len, tar_entry_t *entries, int max) {
     int n = 0;
     size_t off = 0;
+    uint8_t hdr[512];
     while (off + 512 <= len && n < max) {
-        const uint8_t *hdr = pkg + off;
+        if (fseek(f, (long)off, SEEK_SET) != 0 || fread(hdr, 1, 512, f) != 512) {
+            ESP_LOGE(TAG, "tar: short read at offset %u", (unsigned)off);
+            return -1;
+        }
         bool all_zero = true;
         for (int i = 0; i < 512; i++) if (hdr[i]) { all_zero = false; break; }
         if (all_zero) break; /* end-of-archive marker */
@@ -114,7 +135,7 @@ static int tar_parse(const uint8_t *pkg, size_t len, tar_entry_t *entries, int m
         if (typeflag == '0' || typeflag == '\0') {
             strlcpy(entries[n].name, name, sizeof entries[n].name);
             entries[n].size = fsize;
-            entries[n].data = pkg + data_off;
+            entries[n].offset = data_off;
             n++;
         }
 
@@ -176,12 +197,13 @@ static esp_err_t get_hmac_key(uint8_t key[32]) {
     return ESP_OK;
 }
 
-typedef struct { const uint8_t *data; size_t len; } buf_seg_t;
+typedef struct { size_t offset; size_t len; } buf_seg_t;
 
 /* Verifies sig_hex (ASCII hex HMAC-SHA256) over the concatenation of
- * segs[0..n_segs), fed incrementally rather than copied into one
- * contiguous buffer first - the segments already live at various offsets
- * inside the received package.
+ * segs[0..n_segs), each fed to the MAC incrementally in CHUNK_SIZE
+ * pieces read straight off f - never a buffer sized to a whole segment,
+ * let alone the whole package (see the module comment: a bytecode entry
+ * alone could be well past what fits in RAM once WiFi is also resident).
  *
  * Uses the PSA Crypto API, not mbedtls_md_hmac_*(): this mbedtls version
  * (TF-PSA-Crypto, v4) only declares the direct md-HMAC functions under
@@ -190,7 +212,7 @@ typedef struct { const uint8_t *data; size_t len; } buf_seg_t;
  * failed to link against a header that doesn't declare them without that
  * macro). psa_mac_verify_finish() also does the constant-time comparison
  * itself, no separate mbedtls_ct_memcmp() call needed. */
-static bool verify_hmac_segments(const buf_seg_t *segs, int n_segs,
+static bool verify_hmac_segments(FILE *f, const buf_seg_t *segs, int n_segs,
                                   const uint8_t *key, size_t key_len,
                                   const char *sig_hex, size_t sig_hex_len) {
     uint8_t want[32];
@@ -209,8 +231,21 @@ static bool verify_hmac_segments(const buf_seg_t *segs, int n_segs,
 
     psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
     bool step_ok = psa_mac_verify_setup(&op, key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256)) == PSA_SUCCESS;
-    for (int i = 0; step_ok && i < n_segs; i++)
-        step_ok = psa_mac_update(&op, segs[i].data, segs[i].len) == PSA_SUCCESS;
+
+    uint8_t chunk[CHUNK_SIZE];
+    for (int i = 0; step_ok && i < n_segs; i++) {
+        size_t pos = segs[i].offset, remaining = segs[i].len;
+        while (step_ok && remaining) {
+            size_t take = remaining < sizeof chunk ? remaining : sizeof chunk;
+            if (fseek(f, (long)pos, SEEK_SET) != 0 || fread(chunk, 1, take, f) != take) {
+                step_ok = false;
+                break;
+            }
+            step_ok = psa_mac_update(&op, chunk, take) == PSA_SUCCESS;
+            pos += take;
+            remaining -= take;
+        }
+    }
 
     /* Bug found during the 2026-09-04 deadlock audit: psa_mac_verify_finish()
      * failing (PSA_ERROR_INVALID_SIGNATURE on a tampered/wrong-key package -
@@ -218,9 +253,10 @@ static bool verify_hmac_segments(const buf_seg_t *segs, int n_segs,
      * edge case) was falling through without an abort. Per the PSA spec,
      * ANY non-successful completion of an operation (setup/update/finish)
      * needs an explicit psa_mac_abort() - only a *successful*
-     * verify_finish() ends the operation on its own. Whether a leaked
-     * operation context here can explain the mkdir() hang is exactly what
-     * this session's step 1/2 probes are checking. */
+     * verify_finish() ends the operation on its own. (Turned out not to be
+     * the mkdir() deadlock's actual cause - that was a stack overflow one
+     * frame up in the caller, see kb_store_install_selftest() - but this
+     * was a real leak in its own right and stays fixed.) */
     bool verified;
     if (step_ok) {
         verified = psa_mac_verify_finish(&op, want, sizeof want) == PSA_SUCCESS;
@@ -242,6 +278,15 @@ static int cmp_tar_entry_name(const void *a, const void *b) {
 static char *path_of(const char *id, const char *file) {
     static char p[160];
     snprintf(p, sizeof p, ROOT "/%s/%s", id, file);
+    return p;
+}
+
+/* Same idea as path_of(), but under an arbitrary directory (e.g. a
+ * staging dir) rather than ROOT/<id> - used while unpacking, before the
+ * final id-keyed layout exists. */
+static char *path_of_in(const char *dir, const char *file) {
+    static char p[256];
+    snprintf(p, sizeof p, "%s/%s", dir, file);
     return p;
 }
 
@@ -299,15 +344,50 @@ esp_err_t kb_store_remove(const char *id) {
     return rm_recursive(dir);
 }
 
+/* Copies exactly len bytes from src (starting at off) into a new file at
+ * dst_path, CHUNK_SIZE bytes at a time - the same "never buffer a whole
+ * entry" rule as verify_hmac_segments() above, used for staging the
+ * manifest and bytecode entries below. */
+static bool copy_range_to_file(FILE *src, size_t off, size_t len, const char *dst_path) {
+    FILE *dst = fopen(dst_path, "wb");
+    if (!dst) return false;
+    bool ok = fseek(src, (long)off, SEEK_SET) == 0;
+    uint8_t chunk[CHUNK_SIZE];
+    size_t remaining = len;
+    while (ok && remaining) {
+        size_t take = remaining < sizeof chunk ? remaining : sizeof chunk;
+        ok = fread(chunk, 1, take, src) == take && fwrite(chunk, 1, take, dst) == take;
+        remaining -= take;
+    }
+    fclose(dst);
+    return ok;
+}
+
 /* ------------------------------------------------------------- install */
 
-esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID_MAX]) {
-    if (!pkg || !len) return ESP_ERR_INVALID_ARG;
+esp_err_t kb_store_install(const char *pkg_path, char out_id[KB_APP_ID_MAX]) {
+    if (!pkg_path) return ESP_ERR_INVALID_ARG;
+
+    FILE *f = fopen(pkg_path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "install: can't open '%s'", pkg_path);
+        return ESP_ERR_NOT_FOUND;
+    }
+    fseek(f, 0, SEEK_END);
+    long file_len_l = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (file_len_l <= 0) {
+        ESP_LOGE(TAG, "install: '%s' is empty or unreadable", pkg_path);
+        fclose(f);
+        return ESP_ERR_INVALID_ARG;
+    }
+    size_t file_len = (size_t)file_len_l;
 
     tar_entry_t entries[8];
-    int n = tar_parse(pkg, len, entries, 8);
+    int n = tar_parse(f, file_len, entries, 8);
     if (n <= 0) {
         ESP_LOGE(TAG, "install: bad or empty tar");
+        fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -315,10 +395,12 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
     const tar_entry_t *sig_entry = tar_find(entries, n, "sig.hmac");
     if (!mf_entry) {
         ESP_LOGE(TAG, "install: no manifest.json in package");
+        fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
     if (!sig_entry) {
         ESP_LOGE(TAG, "install: no sig.hmac in package - unsigned packages are rejected");
+        fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -331,38 +413,60 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
     tar_entry_t others[8];
     int n_others = 0;
     for (int i = 0; i < n; i++) {
-        if (entries[i].data == mf_entry->data || entries[i].data == sig_entry->data) continue;
+        if (entries[i].offset == mf_entry->offset || entries[i].offset == sig_entry->offset) continue;
         others[n_others++] = entries[i];
     }
     qsort(others, n_others, sizeof others[0], cmp_tar_entry_name);
 
     buf_seg_t segs[9];
-    segs[0] = (buf_seg_t){ mf_entry->data, mf_entry->size };
-    for (int i = 0; i < n_others; i++) segs[i + 1] = (buf_seg_t){ others[i].data, others[i].size };
+    segs[0] = (buf_seg_t){ mf_entry->offset, mf_entry->size };
+    for (int i = 0; i < n_others; i++) segs[i + 1] = (buf_seg_t){ others[i].offset, others[i].size };
 
     char sig_hex[65];
     size_t sig_len = sig_entry->size < sizeof sig_hex - 1 ? sig_entry->size : sizeof sig_hex - 1;
-    memcpy(sig_hex, sig_entry->data, sig_len);
+    if (fseek(f, (long)sig_entry->offset, SEEK_SET) != 0 || fread(sig_hex, 1, sig_len, f) != sig_len) {
+        ESP_LOGE(TAG, "install: could not read sig.hmac");
+        fclose(f);
+        return ESP_FAIL;
+    }
     sig_hex[sig_len] = '\0';
 
     uint8_t key[32];
     if (get_hmac_key(key) != ESP_OK) {
         ESP_LOGE(TAG, "install: could not obtain HMAC key");
+        fclose(f);
         return ESP_FAIL;
     }
-    if (!verify_hmac_segments(segs, n_others + 1, key, sizeof key, sig_hex, sig_len)) {
+    if (!verify_hmac_segments(f, segs, n_others + 1, key, sizeof key, sig_hex, sig_len)) {
         ESP_LOGE(TAG, "install: HMAC verification failed - rejecting package");
+        fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
 
     /* --- signature verified; safe to act on the content now ---------- */
-    /* cJSON_ParseWithLength needs a NUL-terminated-or-length-bounded
-     * buffer; the tar entry points into pkg directly (not NUL-terminated
-     * at its own end - the next entry's header follows immediately), so
-     * this must use the length-bounded parse, not cJSON_Parse(). */
-    cJSON *mf = cJSON_ParseWithLength((const char *)mf_entry->data, mf_entry->size);
+    /* manifest.json is expected small (a few KB at most) - unlike the
+     * bytecode/resource entries (streamed below without ever loading a
+     * whole one into RAM), cJSON needs its input contiguous, so this one
+     * file is read whole into a heap buffer sized exactly to it. */
+    char *mf_buf = malloc(mf_entry->size + 1);
+    if (!mf_buf) {
+        ESP_LOGE(TAG, "install: out of memory reading manifest.json (%u B)", (unsigned)mf_entry->size);
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+    if (fseek(f, (long)mf_entry->offset, SEEK_SET) != 0 ||
+        fread(mf_buf, 1, mf_entry->size, f) != mf_entry->size) {
+        ESP_LOGE(TAG, "install: could not read manifest.json");
+        free(mf_buf);
+        fclose(f);
+        return ESP_FAIL;
+    }
+    mf_buf[mf_entry->size] = '\0';
+    cJSON *mf = cJSON_ParseWithLength(mf_buf, mf_entry->size);
+    free(mf_buf);
     if (!mf) {
         ESP_LOGE(TAG, "install: manifest.json is not valid JSON");
+        fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -421,21 +525,10 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
         goto out;
     }
 
-    bool write_ok = true;
-    {
-        char p[160];
-        snprintf(p, sizeof p, "%s/manifest.json", staging_dir);
-        FILE *f = fopen(p, "wb");
-        if (!f || fwrite(mf_entry->data, 1, mf_entry->size, f) != mf_entry->size) write_ok = false;
-        if (f) fclose(f);
-    }
-    {
-        char p[160];
-        snprintf(p, sizeof p, "%s/%s", staging_dir, j_file->valuestring);
-        FILE *f = fopen(p, "wb");
-        if (!f || fwrite(bc_entry->data, 1, bc_entry->size, f) != bc_entry->size) write_ok = false;
-        if (f) fclose(f);
-    }
+    bool write_ok = copy_range_to_file(f, mf_entry->offset, mf_entry->size,
+                                        path_of_in(staging_dir, "manifest.json"));
+    write_ok = write_ok && copy_range_to_file(f, bc_entry->offset, bc_entry->size,
+                                               path_of_in(staging_dir, j_file->valuestring));
     if (!write_ok) {
         ESP_LOGE(TAG, "install: write to staging failed");
         rm_recursive(staging_dir);
@@ -461,7 +554,7 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
 
     strlcpy(out_id, id, KB_APP_ID_MAX);
     ESP_LOGI(TAG, "install: '%s' ok (%s, %u B bytecode)", id, engine_key, (unsigned)bc_entry->size);
-    /* net_svc.c will call this from its HTTP handler task, whose stack is
+    /* net_svc.c calls this from its HTTP handler task, whose stack is
      * typically ~4 KB by ESP-IDF default - tighter than main_task's 8 KB
      * that just barely (see the 2026-09-04 mkdir()/stack-overflow postmortem,
      * project chat) survived a caller-side 10 KB local. Logging the actual
@@ -476,6 +569,7 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
     result = ESP_OK;
 out:
     cJSON_Delete(mf);
+    fclose(f);
     return result;
 }
 
@@ -620,13 +714,32 @@ esp_err_t kb_store_write_state(const char *id, const char *json) {
  * launcher boots (see main.c's seed_hello_app() comment). Temporary,
  * remove alongside the other bring-up selftests once there's a real
  * install path exercising this (net_svc.c). */
-void kb_store_install_selftest(void) {
+#define KB_STORE_SELFTEST_INSTALL   0x01
+#define KB_STORE_SELFTEST_LISTED    0x02
+#define KB_STORE_SELFTEST_MANIFEST  0x04
+#define KB_STORE_SELFTEST_BYTECODE  0x08
+#define KB_STORE_SELFTEST_TAMPER    0x10
+#define KB_STORE_SELFTEST_ALL_PASS  0x1F
+
+unsigned kb_store_install_selftest(void) {
+    const char *pkg_path = ROOT "/.selftest_pkg.comp";
+    FILE *pf = fopen(pkg_path, "wb");
+    /* k_hello_comp is a flash-resident (.rodata) const array - writing it
+     * straight through fwrite() needs no RAM copy of its own. */
+    if (!pf || fwrite(k_hello_comp, 1, sizeof k_hello_comp, pf) != sizeof k_hello_comp) {
+        if (pf) fclose(pf);
+        ESP_LOGE(TAG, "FAIL: install: could not stage test package");
+        return 0;
+    }
+    fclose(pf);
+
     char id[KB_APP_ID_MAX];
-    esp_err_t err = kb_store_install(k_hello_comp, sizeof k_hello_comp, id);
+    esp_err_t err = kb_store_install(pkg_path, id);
     bool install_ok = (err == ESP_OK) && strcmp(id, "de.jan.hello") == 0;
     if (!install_ok) {
         ESP_LOGE(TAG, "FAIL: install: %s (id='%s')", esp_err_to_name(err), install_ok ? id : "?");
-        return;
+        unlink(pkg_path);
+        return 0;
     }
 
     char ids[8][KB_APP_ID_MAX];
@@ -648,38 +761,95 @@ void kb_store_install_selftest(void) {
 
     /* Flip one byte inside the bytecode entry (well past the tar header,
      * inside app.qjb's content) - same package otherwise, must now fail
-     * HMAC verification and install nothing.
-     *
-     * Root cause of the 2026-09-04 mkdir()/littlefs deadlock investigation
-     * (project chat): this 10 KB copy used to be a plain stack array. This
-     * whole selftest runs on main_task, whose stack is only
-     * CONFIG_ESP_MAIN_TASK_STACK_SIZE (8192 B here) - a single local
-     * bigger than the entire stack, present for the function's whole
-     * frame (fixed-size, so the compiler reserves it at entry regardless
-     * of source-order), leaves no room for kb_store_install()'s own
-     * locals plus littlefs's recursive lfs_dir_fetchmatch() traversal.
-     * That's a real overflow, not a proxy for one - it explains why every
-     * isolated diagnostic probe built during that investigation (none of
-     * which declared anything like this) kept passing while the real call
-     * kept hanging at the identical mkdir() backtrace. Heap-allocating it
-     * instead costs one malloc/free but fits in main_task's stack budget. */
-    uint8_t *tampered = malloc(sizeof k_hello_comp);
-    if (!tampered) {
-        ESP_LOGE(TAG, "FAIL: install: out of memory for tamper test");
-        return;
+     * HMAC verification and install nothing. Done in place on the
+     * already-staged package file - no RAM copy needed at all now that
+     * install works from a path, let alone the 10 KB stack array this
+     * used to be (root cause of the 2026-09-04 mkdir()/littlefs
+     * "deadlock", which was actually a stack overflow one frame up from
+     * here - see kb_store_install()'s and verify_hmac_segments()'s
+     * comments). */
+    /* Where to flip a byte: NOT a hardcoded offset like "600" (the first
+     * two cuts of this refactor, 2026-09-04, both used one and both
+     * silently "passed" the tamper test - install=ok, tamper_rejected=NO
+     * - because that offset turned out to land in unused zero-padding
+     * between tar entries, not inside any entry's actual, HMAC-covered
+     * bytes: Python's tarfile module (atelier.py's cmd_pack) writes a PAX
+     * extended header as the archive's *first* entry, shifting where
+     * manifest.json's real content starts well past where a naive
+     * "just after the first 512-byte header" guess lands. Re-parsing the
+     * already-staged, known-good pkg_path with the exact same tar_parse()/
+     * tar_find() the install path itself uses - instead of guessing a
+     * number - finds manifest.json's real offset regardless of PAX
+     * headers or any other layout detail, the same way the actual
+     * verification does. */
+    size_t manifest_off = 0, manifest_size = 0;
+    {
+        FILE *pf2 = fopen(pkg_path, "rb");
+        if (pf2) {
+            fseek(pf2, 0, SEEK_END);
+            long len2 = ftell(pf2);
+            tar_entry_t scan[8];
+            int n2 = len2 > 0 ? tar_parse(pf2, (size_t)len2, scan, 8) : -1;
+            const tar_entry_t *mf2 = n2 > 0 ? tar_find(scan, n2, "manifest.json") : NULL;
+            if (mf2) { manifest_off = mf2->offset; manifest_size = mf2->size; }
+            fclose(pf2);
+        }
     }
-    memcpy(tampered, k_hello_comp, sizeof k_hello_comp);
-    tampered[600] ^= 0xff;
-    char tamper_id[KB_APP_ID_MAX] = {0};
-    esp_err_t tamper_err = kb_store_install(tampered, sizeof k_hello_comp, tamper_id);
-    free(tampered);
-    bool tamper_rejected = (tamper_err != ESP_OK);
-    kb_store_remove("de.jan.hello"); /* in case rejection somehow still wrote something */
+
+    const char *tamper_path = ROOT "/.selftest_tampered.comp";
+    FILE *tf = fopen(tamper_path, "wb");
+    bool tamper_rejected = false;
+    if (!manifest_size) {
+        ESP_LOGE(TAG, "FAIL: install: could not locate manifest.json in staged package for tamper test");
+        if (tf) fclose(tf);
+    } else if (!tf) {
+        ESP_LOGE(TAG, "FAIL: install: could not create tamper-test package");
+    } else {
+        /* A separate, freshly-written file, not an in-place edit of
+         * pkg_path - copy k_hello_comp byte for byte through the same
+         * CHUNK_SIZE buffer as everywhere else, flipping one byte
+         * (manifest_off + manifest_size/2, safely inside its real
+         * content) in memory before it's written. */
+        size_t tamper_at = manifest_off + manifest_size / 2;
+        bool write_ok = true;
+        size_t off = 0;
+        while (write_ok && off < sizeof k_hello_comp) {
+            size_t take = sizeof k_hello_comp - off < CHUNK_SIZE ? sizeof k_hello_comp - off : CHUNK_SIZE;
+            uint8_t chunk[CHUNK_SIZE];
+            memcpy(chunk, k_hello_comp + off, take);
+            if (tamper_at >= off && tamper_at < off + take) chunk[tamper_at - off] ^= 0xff;
+            write_ok = fwrite(chunk, 1, take, tf) == take;
+            off += take;
+        }
+        fclose(tf);
+
+        if (!write_ok) {
+            ESP_LOGE(TAG, "FAIL: install: could not write tamper-test package");
+            unlink(tamper_path);
+        } else {
+            char tamper_id[KB_APP_ID_MAX] = {0};
+            esp_err_t tamper_err = kb_store_install(tamper_path, tamper_id);
+            tamper_rejected = (tamper_err != ESP_OK);
+            unlink(tamper_path);
+        }
+        kb_store_remove("de.jan.hello"); /* in case rejection somehow still wrote something */
+    }
+    unlink(pkg_path);
 
     bool pass = install_ok && listed && mf_ok && bc_ok && tamper_rejected;
     ESP_LOGI(TAG, "%s: install=ok listed=%s manifest=%s bytecode=%s(%uB) tamper_rejected=%s",
              pass ? "PASS" : "FAIL",
              listed ? "yes" : "no", mf_ok ? "ok" : "bad", bc_ok ? "ok" : "bad",
              (unsigned)bclen, tamper_rejected ? "yes" : "NO(!)");
+    /* Bitmask, not just pass/fail - this line runs at ~1s into boot,
+     * squarely inside the post-USB-reset window this project's serial
+     * capture has never reliably caught (project chat, all session); the
+     * caller re-logs the return value much later (see main.c), and a bare
+     * bool there wouldn't say WHICH check failed - cost a whole extra
+     * flash/test cycle finding that out live once already (2026-09-04). */
+    return (install_ok ? KB_STORE_SELFTEST_INSTALL : 0)
+         | (listed      ? KB_STORE_SELFTEST_LISTED  : 0)
+         | (mf_ok        ? KB_STORE_SELFTEST_MANIFEST : 0)
+         | (bc_ok         ? KB_STORE_SELFTEST_BYTECODE : 0)
+         | (tamper_rejected ? KB_STORE_SELFTEST_TAMPER : 0);
 }
-

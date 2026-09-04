@@ -1,0 +1,23 @@
+menu "Kaliber net_svc"
+
+    config KALIBER_NET_AP_PASSWORD
+        string "Sync-mode SoftAP password override (8+ chars, empty = auto)"
+        default ""
+        help
+            Empty (default): a random 8-character password is generated
+            and stored in NVS on first use (logged once, same pairing-
+            code idea as the app-store HMAC key - never checked into
+            source control). Set this only to pin a fixed password across
+            a fleet; must be empty or at least 8 characters (WPA2's own
+            minimum) or the AP falls back to open (logged loudly).
+
+    config KALIBER_NET_SYNC_TIMEOUT_S
+        int "Sync-mode idle timeout (seconds)"
+        default 120
+        help
+            kb_net_svc_run_sync_mode() tears WiFi back down after this
+            many seconds with no HTTP request (counted from entry, reset
+            on each request) - the radio never outlives an actual sync
+            session.
+
+endmenu
