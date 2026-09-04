@@ -29,6 +29,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
@@ -459,6 +461,14 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
 
     strlcpy(out_id, id, KB_APP_ID_MAX);
     ESP_LOGI(TAG, "install: '%s' ok (%s, %u B bytecode)", id, engine_key, (unsigned)bc_entry->size);
+    /* net_svc.c will call this from its HTTP handler task, whose stack is
+     * typically ~4 KB by ESP-IDF default - tighter than main_task's 8 KB
+     * that just barely (see the 2026-09-04 mkdir()/stack-overflow postmortem,
+     * project chat) survived a caller-side 10 KB local. Logging the actual
+     * headroom here, on every real install, means that handler's stack can
+     * be sized from measurement instead of found out the hard way again. */
+    ESP_LOGI(TAG, "install: caller stack high-water mark %u B",
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
 
     event_t ev = { .type = EV_APP_INSTALLED, .payload = strdup(id) };
     if (!ev.payload || kb_bus_post(&ev) != ESP_OK) free(ev.payload);
@@ -638,12 +648,31 @@ void kb_store_install_selftest(void) {
 
     /* Flip one byte inside the bytecode entry (well past the tar header,
      * inside app.qjb's content) - same package otherwise, must now fail
-     * HMAC verification and install nothing. */
-    uint8_t tampered[sizeof k_hello_comp];
-    memcpy(tampered, k_hello_comp, sizeof tampered);
+     * HMAC verification and install nothing.
+     *
+     * Root cause of the 2026-09-04 mkdir()/littlefs deadlock investigation
+     * (project chat): this 10 KB copy used to be a plain stack array. This
+     * whole selftest runs on main_task, whose stack is only
+     * CONFIG_ESP_MAIN_TASK_STACK_SIZE (8192 B here) - a single local
+     * bigger than the entire stack, present for the function's whole
+     * frame (fixed-size, so the compiler reserves it at entry regardless
+     * of source-order), leaves no room for kb_store_install()'s own
+     * locals plus littlefs's recursive lfs_dir_fetchmatch() traversal.
+     * That's a real overflow, not a proxy for one - it explains why every
+     * isolated diagnostic probe built during that investigation (none of
+     * which declared anything like this) kept passing while the real call
+     * kept hanging at the identical mkdir() backtrace. Heap-allocating it
+     * instead costs one malloc/free but fits in main_task's stack budget. */
+    uint8_t *tampered = malloc(sizeof k_hello_comp);
+    if (!tampered) {
+        ESP_LOGE(TAG, "FAIL: install: out of memory for tamper test");
+        return;
+    }
+    memcpy(tampered, k_hello_comp, sizeof k_hello_comp);
     tampered[600] ^= 0xff;
     char tamper_id[KB_APP_ID_MAX] = {0};
-    esp_err_t tamper_err = kb_store_install(tampered, sizeof tampered, tamper_id);
+    esp_err_t tamper_err = kb_store_install(tampered, sizeof k_hello_comp, tamper_id);
+    free(tampered);
     bool tamper_rejected = (tamper_err != ESP_OK);
     kb_store_remove("de.jan.hello"); /* in case rejection somehow still wrote something */
 
@@ -654,52 +683,3 @@ void kb_store_install_selftest(void) {
              (unsigned)bclen, tamper_rejected ? "yes" : "NO(!)");
 }
 
-/* ------------------------------------------------------- deadlock probe */
-
-/* Step 2 of the 2026-09-04 deadlock audit ("halbieren"): the real
- * manifest content, parsed the same way kb_store_install() does, and a
- * real (dummy-key) HMAC verify over comparable-sized data, run in
- * isolation from each other, each immediately followed by a mkdir() on
- * its own scratch directory. mode 0 = JSON only, 1 = HMAC only, 2 = both
- * (the combination that hangs in kb_store_install() itself) - run one at
- * a time, not all three back to back, so a hang in an earlier mode
- * doesn't taint a later one's result. Triggered on demand from the
- * console (see main.c's console_task()), never at boot - a repeat of
- * this hang must not boot-loop the device. */
-void kb_store_deadlock_probe(int mode) {
-    static const char *k_dummy_manifest =
-        "{\"id\":\"de.jan.hello\",\"version\":\"0.1.0\",\"type\":\"watchface\","
-        "\"abi\":1,\"entries\":{\"quickjs\":\"app.qjb\"},\"permissions\":[]}";
-
-    if (mode == 0 || mode == 2) {
-        cJSON *mf = cJSON_ParseWithLength(k_dummy_manifest, strlen(k_dummy_manifest));
-        ESP_LOGI(TAG, "probe: JSON parse %s", mf ? "ok" : "FAILED");
-        cJSON_Delete(mf);
-    }
-
-    if (mode == 1 || mode == 2) {
-        uint8_t dummy_key[32] = {0};
-        buf_seg_t segs[1] = {{ (const uint8_t *)k_dummy_manifest, strlen(k_dummy_manifest) }};
-        /* Deliberately not a real signature - result doesn't matter here,
-         * only whether the PSA calls leave something behind. */
-        bool r = verify_hmac_segments(segs, 1, dummy_key, sizeof dummy_key,
-            "0000000000000000000000000000000000000000000000000000000000000", 64);
-        ESP_LOGI(TAG, "probe: HMAC verify returned %s (expected false, dummy sig)", r ? "true" : "false");
-    }
-
-    bool heap_ok = heap_caps_check_integrity_all(true);
-    ESP_LOGI(TAG, "probe mode=%d pre-mkdir: heap_ok=%s free=%u largest_block=%u",
-             mode, heap_ok ? "yes" : "NO(!)",
-             (unsigned)esp_get_free_heap_size(),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-
-    char dir[48];
-    snprintf(dir, sizeof dir, ROOT "/.probe_%d", mode);
-    rm_recursive(dir);
-    int64_t t0 = esp_timer_get_time();
-    errno = 0;
-    int r = mkdir(dir, 0755);
-    ESP_LOGI(TAG, "probe mode=%d: mkdir r=%d errno=%d took %lld us",
-             mode, r, errno, (long long)(esp_timer_get_time() - t0));
-    rm_recursive(dir);
-}

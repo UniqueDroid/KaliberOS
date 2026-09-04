@@ -24,29 +24,6 @@ static const char *TAG = "kaliber";
 
 extern void js_watchface_selftest(void);
 extern void kb_store_install_selftest(void);
-extern void kb_store_deadlock_probe(int mode);
-
-/* On-demand trigger for the kb_store_install() deadlock audit (project
- * chat 2026-09-03/04). First cut used a console command over stdin, but
- * this board's console is set up UART0-primary / USB-Serial-JTAG-
- * secondary (see sdkconfig CONFIG_ESP_CONSOLE_UART_DEFAULT) - secondary
- * consoles mirror output only, no stdin, confirmed by testing rather
- * than assumed (sent "probe 0\n" over the same port the log comes out
- * on, nothing happened). Switched to a hardware trigger instead: hold
- * MENU during boot. One mode per flash - change DEBUG_PROBE_MODE and
- * reflash between runs, matching "one test at a time, not all three
- * back to back" from the task write-up. -1 = do nothing (normal boot). */
-#define DEBUG_PROBE_MODE 0
-
-static void run_debug_probe_if_menu_held(void) {
-    if (DEBUG_PROBE_MODE < 0) return;
-    if (!board_debug_menu_pressed()) return;
-    vTaskDelay(pdMS_TO_TICKS(200)); /* confirm a deliberate hold, not a bounce */
-    if (!board_debug_menu_pressed()) return;
-    ESP_LOGW(TAG, "MENU held at boot: running deadlock probe mode=%d", DEBUG_PROBE_MODE);
-    kb_store_deadlock_probe(DEBUG_PROBE_MODE);
-    ESP_LOGW(TAG, "probe done, continuing normal boot");
-}
 
 /* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
  * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
@@ -111,24 +88,14 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(kb_store_init());
 
-    run_debug_probe_if_menu_held();
-
-    /* DISABLED - kb_store_install() hangs on real hardware (task watchdog,
-     * confirmed as a true deadlock, not just slow: reproduces identically
-     * with the watchdog timeout raised 5s -> 30s). Isolated to a specific
-     * sequence: cJSON_ParseWithLength() + the PSA HMAC verify, immediately
-     * followed by littlefs's mkdir() - that same mkdir() on the same
-     * mount, called standalone right after kb_store_init() with nothing
-     * preceding it, completes in under 1ms. Ruled out so far: littlefs
-     * metadata corruption (reproduces on a freshly erased "apps"
-     * partition too). Not yet root-caused - needs live dual-core
-     * debugging (JTAG/OpenOCD) to see why spi_flash_disable_interrupts_
-     * caches_and_other_cpu()'s pause request to CPU1 never gets
-     * acknowledged, which a serial log alone can't show. Re-enable only
-     * after that's understood - see project chat 2026-09-03 for the full
-     * diagnostic trail (boot_capture13 through 20).
-     * kb_store_install_selftest();
-     */
+    /* Bring-up only, same rationale as cadran_selftest()/
+     * js_watchface_selftest() above. Ran behind a one-shot NVS guard for
+     * several days (project chat 2026-09-03/04) while a real hang in
+     * kb_store_install() was traced down to a 10 KB stack array in this
+     * selftest's own tamper test (see app_store.c) - fixed there, safe
+     * to call unconditionally now. Remove alongside the other bring-up
+     * selftests once net_svc.c exercises this path for real. */
+    kb_store_install_selftest();
 
     /* Bring-up only: see seed_apps.c. Only one at a time - the launcher
      * boots whichever app kb_store_list() returns first (readdir order),

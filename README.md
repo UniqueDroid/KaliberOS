@@ -35,6 +35,15 @@ ESP-IDF / FreeRTOS
   registered when both the manifest permission and the board capability
   allow it. What an app isn't allowed to do simply doesn't exist in its
   context.
+- **Big buffers live on the heap, never on the stack.** Tasks here run on
+  single-digit-KB stacks (main_task: 8 KB, the HTTP handler net_svc.c will
+  use: ~4 KB by ESP-IDF default) while the JS engine alone budgets 96 KB of
+  heap. A `uint8_t buf[10240]` local looks harmless in a diff but is bigger
+  than most of this project's task stacks outright - it silently overflows
+  into whatever's next in memory instead of erroring, and the resulting
+  corruption can surface anywhere (a 2026-09-04 hang traced three call
+  frames deep into littlefs turned out to be exactly this, one frame up in
+  the caller). `malloc()`/`free()` it instead, always.
 
 ## Build
 
@@ -82,7 +91,10 @@ Skeleton — architecture is in place, grunt work is flagged:
 - [x] Font rasterizer: `components/gfx` (8×8 bitmap font, ASCII 0x20-0x7e, scale param, per-pixel bounds check), wired into `jw.ui.text()`. No dependency on `unruh`, so `cadran`'s renderer can adopt it later.
 - [ ] Timer wheel in `engine_quickjs.c` (`js_next_timer_ms` feeds the bus
       timeout — the mechanism is already wired up in the launcher)
-- [ ] `app_store`: untar, cJSON manifest, HMAC check, atomic rename
+- [x] `app_store`: untar, cJSON manifest, per-device HMAC check, atomic
+      rename - hardware-verified 2026-09-04, incl. a real mkdir()/littlefs
+      hang traced to a caller-side stack overflow (10 KB local on an 8 KB
+      task stack), not app_store itself.
 - [ ] Sync endpoint (`net_svc.c`): WiFi on demand + `POST /install`
 - [ ] MQuickJS backend (`engine_mqjs.c`) → unlocks v2/C6 boards
 - [ ] Second board: `waveshare_c6_amoled` (MQuickJS, RGB565, always-on)
