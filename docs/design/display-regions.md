@@ -59,7 +59,7 @@ QuickJS** (the arithmetic supports it and it avoids maintaining a second
 engine backend before it's proven necessary), but treat "log free heap
 after `esp_wifi_init()` + engine init, on real C6 hardware, the same way
 criterion 1 measured it on Watchy" as an early **go/no-go gate in the
-board bring-up sequence (§8 step 3)** - before building out app-level
+board bring-up sequence (§9 step 3)** - before building out app-level
 functionality on top, not after. If the real number doesn't hold up,
 `engine_mqjs.c` (already on the roadmap, just not built yet) is the
 documented fallback, not a redesign.
@@ -361,34 +361,86 @@ makes it impossible outright (the C6, checked at install time against
 constraint in this section reads as "the default, with a documented
 exit" rather than "the only option."
 
-## 7. Not in this design
+## 7. Dirty-region tracking (design now, build later)
+
+`end_frame(bool full)`'s `full` parameter is an e-ink concept - it
+means "use the full-refresh LUT, not the partial one" (§3), a real
+hardware distinction that only exists because e-ink ghosts. AMOLED
+doesn't ghost and has no such LUT choice to make; a striped AMOLED
+board's `end_frame()` implementation simply ignores `full` (§3 already
+says this). But that doesn't mean full-panel redraws are free there
+instead - the consequence just moves from "visible ghosting" to
+"invisible cost, same-shaped problem": redrawing a stripe means writing
+its pixels over the AMOLED interface, and *lighting* those pixels -
+bandwidth and power that scale with what's actually redrawn, not with
+whether the panel would visibly ghost otherwise. On the C6, where the
+whole reason this design exists is a tight power/memory budget, a
+render loop that always redraws every stripe leaves real savings on the
+table for no protocol reason.
+
+**Whether a redraw can be skipped depends on who's rendering:**
+
+- **Cadran can do this.** A declarative/hybrid face's widget list and
+  the provider values they're bound to are directly comparable tick to
+  tick - a widget's bound value either changed since the last render or
+  it didn't (the loader already resolves `bind_id` to a value every
+  render, see `cadran_render()`). Dirty-region tracking here means: diff
+  which widgets changed, union their bounding boxes into the set of
+  stripes actually touched, and only call `blit_region()` for those -
+  skip the rest of the loop's iterations entirely, don't render into
+  them at all.
+- **Imperative `onRender()` apps cannot.** `jw.ui` has no visibility
+  into what an app's pixels *mean* - `ui_text(x, y, " stopwatch: 47", …)`
+  called twice with different strings looks the same to `jw.ui` as
+  called twice with the same string, and there is no general way to
+  diff "the app drew something" against "the app drew the same thing
+  again" without re-rendering it first. These stay conservative: any
+  dirty stripe from `jw_ui_take_dirty()` (per §6, unchanged) means every
+  stripe in that render pass gets blitted, exactly like today.
+
+**Why this doesn't need the render loop redesigned when it's built:**
+the loop in §6 already iterates stripes one at a time, calling
+`blit_region()` per stripe inside the loop body - dirty-region tracking
+is a **filter on which iterations reach that call**, not a different
+loop shape. For Cadran specifically: skip the whole render+blit for any
+stripe whose widget diff came up empty. `begin_frame()`/`end_frame()`
+still bracket the *pass*, not each stripe, so a pass that skips most
+stripes still opens and closes cleanly. Nothing in §3-§6 needs to change
+to add this later - it's what "leaves room for it" (previously in this
+section as a §7 bullet, now expanded here per review) concretely means.
+
+## 8. Not in this design
 
 - CO5300 driver, touch, PMIC, RTC - real `boards/waveshare_c6_amoled/`
   work, after this doc is agreed. The official BSP in the component
   registry (`waveshare/esp32_c6_touch_amoled_2_06`) is a reference for
   that step, not for this one.
-- Dirty-region tracking for `end_frame(false)` on always-on RGB565
-  boards (skip unchanged stripes instead of redrawing every one every
-  wake) - `stripe_lines` and the region API leave room for it, but v1
-  redraws every stripe every dirty frame, same as e-ink's full/partial
-  distinction already existing independently of this design.
+- Actually building §7's dirty-region tracking - designed above, not
+  implemented; v1 redraws every stripe every dirty frame regardless of
+  board, same as e-ink's full/partial distinction already existing
+  independently of this design.
 - MQuickJS - orthogonal to this doc; whichever engine calls
   `JS_HOOK_ON_RENDER` doesn't change how many times or into what buffer
   it gets called.
 
-## 8. Roadmap placement
+## 9. Roadmap placement
 
 Blocks `boards/waveshare_c6_amoled/` (README roadmap: "second board...
 stress test for the HAL"). Suggested order once this doc is agreed:
 
-1. `caps.stripe_lines` + `display_ops_t` reshape, Watchy v3 ported to
+1. [x] `caps.stripe_lines` + `display_ops_t` reshape, Watchy v3 ported to
    the new shape with `stripe_lines=0` (§2's bar: verify on real
    hardware that nothing about its behavior changed - same e-ink
-   selftest, same ghosting counter, before this is trusted).
-2. `gfx_ctx_t` + Cadran per-stripe rendering, `jw.ui` per-stripe
-   rebinding in the launcher - still only exercised on Watchy
-   (`n_stripes=1` throughout), a second opportunity to confirm §2's bar
-   before a striped board exists to test against for real.
+   selftest, same ghosting counter, before this is trusted). Done and
+   hardware-verified 2026-09-04.
+2. [x] `gfx_ctx_t` + Cadran per-stripe rendering, `jw.ui` per-stripe
+   rebinding in the launcher, render-pass budget ceiling in the launcher
+   (§6). Done and hardware-verified 2026-09-04, including a
+   `stripe_lines=50` smoke test on this same board (§3's callout) that
+   found and fixed a real bug in the SSD1681 driver's RAM-window
+   addressing - exactly the kind of thing worth catching before a second
+   controller is also new. Confirmed `stripe_lines=0` unaffected before
+   reverting to it (the real Watchy value).
 3. `boards/waveshare_c6_amoled/`: CO5300 driver, `stripe_lines=32` (or
    whatever the real hardware profiling in §6 says), touch/PMIC/RTC.
    **Go/no-go gate, before building app-level functionality on top**:
