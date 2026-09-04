@@ -79,6 +79,15 @@ own HMAC key (`get_hmac_key()` in `app_store.c` - generated into NVS on
 first boot and logged once, or `KALIBER_STORE_HMAC_KEY_OVERRIDE` if
 pre-provisioned).
 
+No package signed with a stray or missing `--key` will install on a real
+device - there is no bundled example that's pre-signed for your specific
+board (that's what `docs/design/launcher-states.md` §4's default-face
+auto-install will eventually provide, once it's unblocked - it's gated
+on Cadran roadmap step 6, not step 4; step 4 itself, the serializer and
+`WatchFace()` API, is already done). A rejected install logged as `HMAC
+verification failed` is the store working correctly, not a bug - re-pack
+with `--key <your device's own key>`.
+
 ## Design
 
 [`docs/design/`](docs/design/) holds concept and architecture docs not implemented yet:
