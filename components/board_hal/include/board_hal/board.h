@@ -94,6 +94,15 @@ const board_desc_t *board_get(void);
 /* Size in bytes of the canonical framebuffer for this board. */
 size_t board_fb_size(void);
 
+/* Bring-up debug helper only, NOT part of the stable HAL surface - a
+ * synchronous, one-shot raw GPIO read of the MENU button, bypassing the
+ * normal ISR/event-bus path entirely. Added for an explicit,
+ * non-boot-time trigger for a diagnostic probe (project chat
+ * 2026-09-04, kb_store_install()'s deadlock). Remove once that's
+ * resolved - a generic per-button raw-read API would replace this if a
+ * real future need shows up, this one's deliberately narrow. */
+bool board_debug_menu_pressed(void);
+
 #ifdef __cplusplus
 }
 #endif

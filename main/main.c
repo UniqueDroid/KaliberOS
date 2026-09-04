@@ -7,6 +7,8 @@
 #include "freertos/semphr.h"
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdio.h>
+#include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -22,6 +24,29 @@ static const char *TAG = "kaliber";
 
 extern void js_watchface_selftest(void);
 extern void kb_store_install_selftest(void);
+extern void kb_store_deadlock_probe(int mode);
+
+/* On-demand trigger for the kb_store_install() deadlock audit (project
+ * chat 2026-09-03/04). First cut used a console command over stdin, but
+ * this board's console is set up UART0-primary / USB-Serial-JTAG-
+ * secondary (see sdkconfig CONFIG_ESP_CONSOLE_UART_DEFAULT) - secondary
+ * consoles mirror output only, no stdin, confirmed by testing rather
+ * than assumed (sent "probe 0\n" over the same port the log comes out
+ * on, nothing happened). Switched to a hardware trigger instead: hold
+ * MENU during boot. One mode per flash - change DEBUG_PROBE_MODE and
+ * reflash between runs, matching "one test at a time, not all three
+ * back to back" from the task write-up. -1 = do nothing (normal boot). */
+#define DEBUG_PROBE_MODE 0
+
+static void run_debug_probe_if_menu_held(void) {
+    if (DEBUG_PROBE_MODE < 0) return;
+    if (!board_debug_menu_pressed()) return;
+    vTaskDelay(pdMS_TO_TICKS(200)); /* confirm a deliberate hold, not a bounce */
+    if (!board_debug_menu_pressed()) return;
+    ESP_LOGW(TAG, "MENU held at boot: running deadlock probe mode=%d", DEBUG_PROBE_MODE);
+    kb_store_deadlock_probe(DEBUG_PROBE_MODE);
+    ESP_LOGW(TAG, "probe done, continuing normal boot");
+}
 
 /* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
  * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
@@ -85,6 +110,8 @@ void app_main(void) {
     ESP_ERROR_CHECK(nvs_err);
 
     ESP_ERROR_CHECK(kb_store_init());
+
+    run_debug_probe_if_menu_held();
 
     /* DISABLED - kb_store_install() hangs on real hardware (task watchdog,
      * confirmed as a true deadlock, not just slow: reproduces identically

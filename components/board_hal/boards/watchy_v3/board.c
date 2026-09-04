@@ -266,6 +266,12 @@ static const input_ops_t input_ops = {
     .init = input_init, .arm_wake = input_arm_wake,
 };
 
+/* See board_hal/board.h's declaration - bring-up debug only. Active-low,
+ * same convention as input_init()'s GPIO_PULLUP_ENABLE config. */
+bool board_debug_menu_pressed(void) {
+    return gpio_get_level(PIN_BTN_MENU) == 0;
+}
+
 /* ------------------------------------------------------------------ power */
 
 static esp_err_t power_init(void) {

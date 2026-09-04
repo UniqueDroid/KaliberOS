@@ -28,9 +28,13 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
+#include "esp_timer.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "nvs.h"
 #include "psa/crypto.h"
 #include "cJSON.h"
@@ -202,16 +206,29 @@ static bool verify_hmac_segments(const buf_seg_t *segs, int n_segs,
     if (psa_import_key(&attrs, key, key_len, &key_id) != PSA_SUCCESS) return false;
 
     psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
-    bool ok = psa_mac_verify_setup(&op, key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256)) == PSA_SUCCESS;
-    for (int i = 0; ok && i < n_segs; i++)
-        ok = psa_mac_update(&op, segs[i].data, segs[i].len) == PSA_SUCCESS;
-    if (ok) {
-        ok = psa_mac_verify_finish(&op, want, sizeof want) == PSA_SUCCESS;
+    bool step_ok = psa_mac_verify_setup(&op, key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256)) == PSA_SUCCESS;
+    for (int i = 0; step_ok && i < n_segs; i++)
+        step_ok = psa_mac_update(&op, segs[i].data, segs[i].len) == PSA_SUCCESS;
+
+    /* Bug found during the 2026-09-04 deadlock audit: psa_mac_verify_finish()
+     * failing (PSA_ERROR_INVALID_SIGNATURE on a tampered/wrong-key package -
+     * the routine, expected outcome of the tamper test below, not a rare
+     * edge case) was falling through without an abort. Per the PSA spec,
+     * ANY non-successful completion of an operation (setup/update/finish)
+     * needs an explicit psa_mac_abort() - only a *successful*
+     * verify_finish() ends the operation on its own. Whether a leaked
+     * operation context here can explain the mkdir() hang is exactly what
+     * this session's step 1/2 probes are checking. */
+    bool verified;
+    if (step_ok) {
+        verified = psa_mac_verify_finish(&op, want, sizeof want) == PSA_SUCCESS;
+        if (!verified) psa_mac_abort(&op);
     } else {
+        verified = false;
         psa_mac_abort(&op);
     }
     psa_destroy_key(key_id);
-    return ok;
+    return verified;
 }
 
 static int cmp_tar_entry_name(const void *a, const void *b) {
@@ -382,6 +399,17 @@ esp_err_t kb_store_install(const uint8_t *pkg, size_t len, char out_id[KB_APP_ID
     const char *id = j_id->valuestring;
     char staging_dir[128];
     snprintf(staging_dir, sizeof staging_dir, STAGING "/%s", id);
+
+    /* Deadlock-audit step 1 (2026-09-04): if the untar code overran a
+     * buffer, this is where it would show up - before touching the flash
+     * at all, so a corrupt heap isn't confused with the mkdir() hang
+     * itself. Kept permanently, not just for this probe: cheap, and
+     * "heap looked fine going into littlefs" is a useful fact either way. */
+    bool heap_ok = heap_caps_check_integrity_all(true);
+    ESP_LOGI(TAG, "pre-mkdir: heap_ok=%s free=%u largest_block=%u",
+             heap_ok ? "yes" : "NO(!)",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
 
     mkdir(STAGING, 0755); /* ok if it already exists */
     rm_recursive(staging_dir); /* clear any leftover from a prior failed install */
@@ -624,4 +652,54 @@ void kb_store_install_selftest(void) {
              pass ? "PASS" : "FAIL",
              listed ? "yes" : "no", mf_ok ? "ok" : "bad", bc_ok ? "ok" : "bad",
              (unsigned)bclen, tamper_rejected ? "yes" : "NO(!)");
+}
+
+/* ------------------------------------------------------- deadlock probe */
+
+/* Step 2 of the 2026-09-04 deadlock audit ("halbieren"): the real
+ * manifest content, parsed the same way kb_store_install() does, and a
+ * real (dummy-key) HMAC verify over comparable-sized data, run in
+ * isolation from each other, each immediately followed by a mkdir() on
+ * its own scratch directory. mode 0 = JSON only, 1 = HMAC only, 2 = both
+ * (the combination that hangs in kb_store_install() itself) - run one at
+ * a time, not all three back to back, so a hang in an earlier mode
+ * doesn't taint a later one's result. Triggered on demand from the
+ * console (see main.c's console_task()), never at boot - a repeat of
+ * this hang must not boot-loop the device. */
+void kb_store_deadlock_probe(int mode) {
+    static const char *k_dummy_manifest =
+        "{\"id\":\"de.jan.hello\",\"version\":\"0.1.0\",\"type\":\"watchface\","
+        "\"abi\":1,\"entries\":{\"quickjs\":\"app.qjb\"},\"permissions\":[]}";
+
+    if (mode == 0 || mode == 2) {
+        cJSON *mf = cJSON_ParseWithLength(k_dummy_manifest, strlen(k_dummy_manifest));
+        ESP_LOGI(TAG, "probe: JSON parse %s", mf ? "ok" : "FAILED");
+        cJSON_Delete(mf);
+    }
+
+    if (mode == 1 || mode == 2) {
+        uint8_t dummy_key[32] = {0};
+        buf_seg_t segs[1] = {{ (const uint8_t *)k_dummy_manifest, strlen(k_dummy_manifest) }};
+        /* Deliberately not a real signature - result doesn't matter here,
+         * only whether the PSA calls leave something behind. */
+        bool r = verify_hmac_segments(segs, 1, dummy_key, sizeof dummy_key,
+            "0000000000000000000000000000000000000000000000000000000000000", 64);
+        ESP_LOGI(TAG, "probe: HMAC verify returned %s (expected false, dummy sig)", r ? "true" : "false");
+    }
+
+    bool heap_ok = heap_caps_check_integrity_all(true);
+    ESP_LOGI(TAG, "probe mode=%d pre-mkdir: heap_ok=%s free=%u largest_block=%u",
+             mode, heap_ok ? "yes" : "NO(!)",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+
+    char dir[48];
+    snprintf(dir, sizeof dir, ROOT "/.probe_%d", mode);
+    rm_recursive(dir);
+    int64_t t0 = esp_timer_get_time();
+    errno = 0;
+    int r = mkdir(dir, 0755);
+    ESP_LOGI(TAG, "probe mode=%d: mkdir r=%d errno=%d took %lld us",
+             mode, r, errno, (long long)(esp_timer_get_time() - t0));
+    rm_recursive(dir);
 }
