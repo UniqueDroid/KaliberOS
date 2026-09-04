@@ -86,22 +86,34 @@ static void draw_sync_screen(const char *ssid, const char *pass, const char *ip)
     const board_desc_t *b = board_get();
     uint8_t *fb = malloc(board_fb_size());
     if (!fb) return;
-    memset(fb, 0xFF, board_fb_size()); /* white, matches jw_ui clear() */
-
-    gfx_draw_text(fb, b, 10, 10, "SYNC MODE", 2);
     char line[80]; /* generous: GCC's format-truncation check assumes pass[]
                      * (declared 65) could be fully used, "PASS: " + 64 + NUL
                      * already exceeds a tighter buffer here. */
-    snprintf(line, sizeof line, "SSID: %s", ssid);
-    gfx_draw_text(fb, b, 10, 50, line, 1);
-    snprintf(line, sizeof line, "PASS: %s", pass);
-    gfx_draw_text(fb, b, 10, 65, line, 1);
-    snprintf(line, sizeof line, "IP:   %s:8080", ip);
-    gfx_draw_text(fb, b, 10, 80, line, 1);
-    gfx_draw_text(fb, b, 10, 110, "POST /install", 1);
 
-    b->display->blit(fb, board_fb_size());
-    b->display->update(true);
+    /* Fixed content at panel-absolute coordinates, drawn fresh per
+     * stripe (docs/design/display-regions.md) - stripe=disp_h on
+     * Watchy means this loop runs once, same as before stripes
+     * existed. */
+    uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    if (b->display->begin_frame) b->display->begin_frame();
+    for (int y = 0; y < b->caps.disp_h; y += stripe) {
+        int h = stripe;
+        if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
+        gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = y, .height = h };
+        memset(fb, 0xFF, board_fb_size()); /* white, matches jw_ui clear() */
+
+        gfx_draw_text(&ctx, 10, 10, "SYNC MODE", 2);
+        snprintf(line, sizeof line, "SSID: %s", ssid);
+        gfx_draw_text(&ctx, 10, 50, line, 1);
+        snprintf(line, sizeof line, "PASS: %s", pass);
+        gfx_draw_text(&ctx, 10, 65, line, 1);
+        snprintf(line, sizeof line, "IP:   %s:8080", ip);
+        gfx_draw_text(&ctx, 10, 80, line, 1);
+        gfx_draw_text(&ctx, 10, 110, "POST /install", 1);
+
+        b->display->blit_region(0, y, b->caps.disp_w, h, fb);
+    }
+    b->display->end_frame(true);
     free(fb);
 }
 

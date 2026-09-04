@@ -139,7 +139,13 @@ static esp_err_t disp_init(void) {
     return ESP_OK;
 }
 
-static esp_err_t disp_blit(const uint8_t *fb, size_t len) {
+/* Region API (docs/design/display-regions.md): stripe_lines=0 means the
+ * launcher only ever calls this once, with (x,y)=(0,0) and (w,h) the
+ * whole panel - x/y/w unused below, same body as the old blit(fb, len)
+ * unchanged, just deriving len from h instead of taking it directly. */
+static esp_err_t disp_blit_region(int x, int y, int w, int h, const uint8_t *buf) {
+    (void)x; (void)y; (void)w;
+    size_t len = (size_t)DISP_W * (size_t)h / 8;
     ssd1681_set_ram_window();
     /* GxEPD2 also writes the "previous" buffer (0x26) once before the
      * first real update, so the differential update the controller does
@@ -147,11 +153,11 @@ static esp_err_t disp_blit(const uint8_t *fb, size_t len) {
      * needed once - later blits only touch "current" (0x24). */
     if (!s_wrote_prev_buf) {
         ssd1681_cmd(0x26);
-        ssd1681_data(fb, len);
+        ssd1681_data(buf, len);
         s_wrote_prev_buf = true;
     }
     ssd1681_cmd(0x24);
-    ssd1681_data(fb, len);
+    ssd1681_data(buf, len);
     return ESP_OK;
 }
 
@@ -161,7 +167,9 @@ static esp_err_t disp_blit(const uint8_t *fb, size_t len) {
  * not something a Complication should have to think about. */
 #define SSD1681_FORCE_FULL_EVERY_N_PARTIALS 10
 
-static esp_err_t disp_update(bool full) {
+/* Was update(bool full) - same body, same ghosting-mitigation state,
+ * renamed to pair with begin_frame() (NULL below, nothing to set up). */
+static esp_err_t disp_end_frame(bool full) {
     /* Partial LUT assumes a full update already established a baseline
      * image (GxEPD2's _initial_refresh forces this the same way) - the
      * caller (launcher.c) doesn't track that, so enforce it here. */
@@ -188,8 +196,8 @@ static esp_err_t disp_sleep(void) {
 }
 
 static const display_ops_t disp_ops = {
-    .init = disp_init, .blit = disp_blit,
-    .update = disp_update, .sleep = disp_sleep,
+    .init = disp_init, .begin_frame = NULL, .blit_region = disp_blit_region,
+    .end_frame = disp_end_frame, .sleep = disp_sleep,
 };
 
 /* ------------------------------------------------------------------ input */
@@ -342,11 +350,13 @@ static const board_desc_t desc = {
         .disp_h           = DISP_H,
         .disp_kind        = DISP_EINK_1BIT,
         .sleep_model_deep = true,
+        .stripe_lines     = 0, /* one stripe covers the whole panel - see board.h */
     },
 };
 
 const board_desc_t *board_get(void) { return &desc; }
 
 size_t board_fb_size(void) {
-    return (size_t)DISP_W * DISP_H / 8;   /* 1 bpp */
+    uint16_t lines = desc.caps.stripe_lines ? desc.caps.stripe_lines : DISP_H;
+    return (size_t)DISP_W * lines / 8;   /* 1 bpp */
 }

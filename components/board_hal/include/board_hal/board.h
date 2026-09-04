@@ -42,12 +42,28 @@ typedef enum {
 
 /* -------------------------------------------------------------------- ops */
 
+/* Region-based (docs/design/display-regions.md): a board whose panel
+ * doesn't fit a full framebuffer in RAM (caps.stripe_lines != 0, none
+ * yet - Watchy sets 0, "one stripe covers the whole panel") renders in
+ * horizontal bands. blit_region() takes a tightly-packed w*h buffer,
+ * NOT an offset into a full-panel one - (x,y) are panel-absolute. */
 typedef struct {
     esp_err_t (*init)(void);
-    /* Blit the full canonical framebuffer owned by the caller. */
-    esp_err_t (*blit)(const uint8_t *fb, size_t len);
-    /* Push blitted content to glass. full=false may use partial refresh. */
-    esp_err_t (*update)(bool full);
+    /* Optional (may be NULL) - most boards, including Watchy, don't
+     * need per-frame setup and leave this out; callers must NULL-check
+     * before calling it. A board that needs to open a write-window/
+     * transaction spanning multiple blit_region() calls uses it. */
+    esp_err_t (*begin_frame)(void);
+    /* Blit one region: buf is w*h pixels in caps.disp_kind's native
+     * format. Watchy always calls this once, with the whole panel
+     * (stripe_lines=0) - identical to the old blit()'s body. */
+    esp_err_t (*blit_region)(int x, int y, int w, int h, const uint8_t *buf);
+    /* Push everything blitted since begin_frame() to glass. full=false
+     * may use partial refresh (e-ink) or skip unchanged regions
+     * (always-on RGB565, not implemented yet). Was update(bool full) -
+     * same meaning, same ghosting-mitigation counter underneath on
+     * Watchy, just renamed to pair with begin_frame(). */
+    esp_err_t (*end_frame)(bool full);
     /* Put panel into deepest sleep state (before deep sleep / idle). */
     esp_err_t (*sleep)(void);
 } display_ops_t;
@@ -91,13 +107,21 @@ typedef struct {
         uint16_t         disp_w, disp_h;
         disp_kind_t      disp_kind;
         bool             sleep_model_deep; /* true: Watchy-style deep sleep  */
+        /* 0 = one stripe covers the whole panel (every board today) -
+         * see docs/design/display-regions.md. Nonzero: board_fb_size()
+         * returns one stripe's size, not the full panel's; callers loop
+         * ceil(disp_h / stripe_lines) times. */
+        uint16_t         stripe_lines;
     } caps;
 } board_desc_t;
 
 /* Implemented exactly once by the selected board. */
 const board_desc_t *board_get(void);
 
-/* Size in bytes of the canonical framebuffer for this board. */
+/* Size in bytes of the buffer a caller allocates and renders into - the
+ * full panel if caps.stripe_lines is 0, one stripe's worth otherwise
+ * (docs/design/display-regions.md §4). Every existing caller already
+ * treats this as "the buffer I draw into," which stays true either way. */
 size_t board_fb_size(void);
 
 #ifdef __cplusplus

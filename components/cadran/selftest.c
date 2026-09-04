@@ -81,7 +81,14 @@ void cadran_selftest(void) {
     }
     memset(fb, 0xFF, board_fb_size()); /* white, matches jw_ui clear() */
 
-    err = cadran_render(face, fb, b);
+    /* board_fb_size() already returns one stripe's worth for a striped
+     * board (docs/design/display-regions.md) - this bring-up test only
+     * ever checks the first stripe, not the whole panel, on such a
+     * board; fine for a sanity check, not exhaustive (flagged for
+     * removal anyway, see cadran.h). */
+    int stripe_h = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = 0, .height = stripe_h };
+    err = cadran_render(face, &ctx);
     bool render_ok = (err == ESP_OK);
 
     /* Confirm the RECT and TEXT widgets actually flipped pixels inside
@@ -119,8 +126,9 @@ void cadran_selftest(void) {
 
 #if CADRAN_SELFTEST_BLIT_TO_PANEL
     if (render_ok && b->display) {
-        esp_err_t berr = b->display->blit(fb, board_fb_size());
-        if (berr == ESP_OK) berr = b->display->update(true /* full refresh */);
+        if (b->display->begin_frame) b->display->begin_frame();
+        esp_err_t berr = b->display->blit_region(0, 0, b->caps.disp_w, stripe_h, fb);
+        if (berr == ESP_OK) berr = b->display->end_frame(true /* full refresh */);
         ESP_LOGI(TAG, "blit to panel: %s", berr == ESP_OK ? "ok" : esp_err_to_name(berr));
     }
 #endif

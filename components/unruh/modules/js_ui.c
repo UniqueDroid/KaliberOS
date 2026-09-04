@@ -19,18 +19,27 @@
 
 static const char *TAG = "jw.ui";
 
-/* Owned by the launcher, injected via jw_ui_bind_fb(). */
-static uint8_t *s_fb;
-static bool     s_dirty;
+/* Owned by the launcher, injected via jw_ui_bind_fb() - once per stripe
+ * on a striped board (docs/design/display-regions.md), rebound between
+ * onRender() calls without the app ever knowing: app code always uses
+ * panel-absolute x/y, s_gfx_ctx's origin_y/height do the clipping. For a
+ * non-striped board this is called once per frame, same as before
+ * gfx_ctx_t existed. */
+static gfx_ctx_t s_gfx_ctx;
+static bool      s_dirty;
 
-void jw_ui_bind_fb(uint8_t *fb) { s_fb = fb; }
+void jw_ui_bind_fb(const gfx_ctx_t *ctx) { s_gfx_ctx = *ctx; }
 bool jw_ui_take_dirty(void) { bool d = s_dirty; s_dirty = false; return d; }
 
 /* ------------------------------------------------------------ primitives */
 
 static JSValue ui_clear(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv) {
     (void)t; (void)argc; (void)argv;
-    if (s_fb) memset(s_fb, 0xFF, board_fb_size());   /* white on e-ink */
+    /* Clears only the current stripe, not the whole panel - matches
+     * board_fb_size() (one stripe's worth on a striped board) and is
+     * exactly what a fresh onRender() call for this stripe should do:
+     * memset the buffer it's actually about to draw into, nothing more. */
+    if (s_gfx_ctx.fb) memset(s_gfx_ctx.fb, 0xFF, board_fb_size());   /* white on e-ink */
     s_dirty = true;
     return JS_UNDEFINED;
 }
@@ -44,7 +53,7 @@ static JSValue ui_text(JSContext *ctx, JSValueConst t, int argc, JSValueConst *a
     const char *s = JS_ToCString(ctx, argv[2]);
     if (!s) return JS_EXCEPTION;
     if (argc >= 4) JS_ToInt32(ctx, &scale, argv[3]);
-    if (s_fb) gfx_draw_text(s_fb, board_get(), (int)x, (int)y, s, (int)scale);
+    if (s_gfx_ctx.fb) gfx_draw_text(&s_gfx_ctx, (int)x, (int)y, s, (int)scale);
     ESP_LOGI(TAG, "text(%d,%d) x%d: %s", (int)x, (int)y, (int)scale, s);
     JS_FreeCString(ctx, s);
     s_dirty = true;

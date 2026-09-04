@@ -14,27 +14,38 @@ static const char *TAG = "cadran.render";
  * 1=white/0=black (matches jw_ui's clear(), which memsets 0xFF), so
  * "draw" clears the bit. AMOLED RGB565: draws black on the assumption of
  * a white-cleared background - provisional until the first RGB565 board
- * lands and defines a real palette (see design doc, no such board yet). */
-static inline void set_px(uint8_t *fb, const board_desc_t *b, int x, int y) {
-    if (x < 0 || y < 0 || x >= b->caps.disp_w || y >= b->caps.disp_h) return;
+ * lands and defines a real palette (see design doc, no such board yet).
+ *
+ * x/y are panel-absolute; clipped against the panel edge AND the current
+ * stripe (docs/design/display-regions.md) - a widget straddling a stripe
+ * boundary draws whatever fraction falls in this stripe, nothing more,
+ * the same way it already clipped at the panel edge before stripes
+ * existed. Same logic as gfx/text.c's private set_px, kept as its own
+ * copy rather than shared, matching how this file already did before
+ * gfx_ctx_t existed. */
+static inline void set_px(const gfx_ctx_t *ctx, int x, int y) {
+    const board_desc_t *b = ctx->board;
+    if (x < 0 || x >= b->caps.disp_w) return;
+    int local_y = y - ctx->origin_y;
+    if (local_y < 0 || local_y >= ctx->height) return;
     if (b->caps.disp_kind == DISP_EINK_1BIT) {
         size_t stride = ((size_t)b->caps.disp_w + 7) / 8;
-        size_t byte_i = (size_t)y * stride + (size_t)x / 8;
+        size_t byte_i = (size_t)local_y * stride + (size_t)x / 8;
         uint8_t mask = 0x80 >> (x % 8);
-        fb[byte_i] &= (uint8_t)~mask;
+        ctx->fb[byte_i] &= (uint8_t)~mask;
     } else {
-        size_t idx = ((size_t)y * b->caps.disp_w + (size_t)x) * 2;
-        fb[idx] = 0x00;
-        fb[idx + 1] = 0x00;
+        size_t idx = ((size_t)local_y * b->caps.disp_w + (size_t)x) * 2;
+        ctx->fb[idx] = 0x00;
+        ctx->fb[idx + 1] = 0x00;
     }
 }
 
-static void draw_line(uint8_t *fb, const board_desc_t *b, int x0, int y0, int x1, int y1) {
+static void draw_line(const gfx_ctx_t *ctx, int x0, int y0, int x1, int y1) {
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
     for (;;) {
-        set_px(fb, b, x0, y0);
+        set_px(ctx, x0, y0);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
@@ -42,28 +53,28 @@ static void draw_line(uint8_t *fb, const board_desc_t *b, int x0, int y0, int x1
     }
 }
 
-static void draw_rect(uint8_t *fb, const board_desc_t *b, int x, int y, int w, int h, bool filled) {
+static void draw_rect(const gfx_ctx_t *ctx, int x, int y, int w, int h, bool filled) {
     if (w <= 0 || h <= 0) return;
     if (filled) {
         for (int yy = y; yy < y + h; yy++)
             for (int xx = x; xx < x + w; xx++)
-                set_px(fb, b, xx, yy);
+                set_px(ctx, xx, yy);
     } else {
-        draw_line(fb, b, x, y, x + w - 1, y);
-        draw_line(fb, b, x, y + h - 1, x + w - 1, y + h - 1);
-        draw_line(fb, b, x, y, x, y + h - 1);
-        draw_line(fb, b, x + w - 1, y, x + w - 1, y + h - 1);
+        draw_line(ctx, x, y, x + w - 1, y);
+        draw_line(ctx, x, y + h - 1, x + w - 1, y + h - 1);
+        draw_line(ctx, x, y, x, y + h - 1);
+        draw_line(ctx, x + w - 1, y, x + w - 1, y + h - 1);
     }
 }
 
 /* angle_deg: 0 = 12 o'clock, clockwise (matches the time.*_angle providers). */
-static void draw_hand(uint8_t *fb, const board_desc_t *b, const cadran_widget_rec_t *w,
+static void draw_hand(const gfx_ctx_t *ctx, const cadran_widget_rec_t *w,
                        int32_t angle_deg) {
     float rad = (float)angle_deg * (float)M_PI / 180.0f;
     int len = w->params[0];
     int x1 = w->x + (int)lroundf((float)len * sinf(rad));
     int y1 = w->y - (int)lroundf((float)len * cosf(rad));
-    draw_line(fb, b, w->x, w->y, x1, y1);
+    draw_line(ctx, w->x, w->y, x1, y1);
 }
 
 /* TEXT widget: str_ref is a format string (design doc §4, "built-in
@@ -73,7 +84,7 @@ static void draw_hand(uint8_t *fb, const board_desc_t *b, const cadran_widget_re
  * text widget doesn't have to be bound to anything. params[0], if
  * nonzero, is the gfx scale factor; the design doc's own widget example
  * doesn't set one, so 0/unset defaults to scale 1. */
-static void draw_text(uint8_t *fb, const board_desc_t *b, const cadran_widget_rec_t *w,
+static void draw_text(const gfx_ctx_t *ctx, const cadran_widget_rec_t *w,
                        const char *fmt, bool have_val, const cadran_value_t *val) {
     if (!fmt) return;
     char out[64];
@@ -92,13 +103,14 @@ static void draw_text(uint8_t *fb, const board_desc_t *b, const cadran_widget_re
         out[sizeof out - 1] = '\0';
     }
     int scale = w->params[0] > 0 ? w->params[0] : 1;
-    gfx_draw_text(fb, b, w->x, w->y, out, scale);
+    gfx_draw_text(ctx, w->x, w->y, out, scale);
 }
 
 /* ------------------------------------------------------------- render */
 
-esp_err_t cadran_render(const cadran_face_t *face, uint8_t *fb, const board_desc_t *board) {
-    if (!face || !fb || !board) return ESP_ERR_INVALID_ARG;
+esp_err_t cadran_render(const cadran_face_t *face, const gfx_ctx_t *ctx) {
+    if (!face || !ctx || !ctx->fb || !ctx->board) return ESP_ERR_INVALID_ARG;
+    const board_desc_t *board = ctx->board;
 
     const cadran_widget_rec_t *widgets = cadran_face_widgets(face);
     uint8_t n = cadran_face_widget_count(face);
@@ -115,16 +127,16 @@ esp_err_t cadran_render(const cadran_face_t *face, uint8_t *fb, const board_desc
 
         switch ((cadran_widget_type_t)w->type) {
         case CADRAN_WIDGET_RECT:
-            draw_rect(fb, board, w->x, w->y, w->params[0], w->params[1], w->params[2] != 0);
+            draw_rect(ctx, w->x, w->y, w->params[0], w->params[1], w->params[2] != 0);
             break;
         case CADRAN_WIDGET_LINE:
-            draw_line(fb, board, w->x, w->y, w->params[0], w->params[1]);
+            draw_line(ctx, w->x, w->y, w->params[0], w->params[1]);
             break;
         case CADRAN_WIDGET_HAND:
-            draw_hand(fb, board, w, have_val ? val.i32 : 0);
+            draw_hand(ctx, w, have_val ? val.i32 : 0);
             break;
         case CADRAN_WIDGET_TEXT:
-            draw_text(fb, board, w, cadran_face_string(face, w->str_ref), have_val, &val);
+            draw_text(ctx, w, cadran_face_string(face, w->str_ref), have_val, &val);
             break;
         case CADRAN_WIDGET_IMG:
         case CADRAN_WIDGET_IMG_DIGITS:

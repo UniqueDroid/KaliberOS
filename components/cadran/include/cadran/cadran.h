@@ -16,6 +16,7 @@
 #include <stddef.h>
 #include "esp_err.h"
 #include "board_hal/board.h"
+#include "gfx/text.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,11 +31,14 @@ esp_err_t cadran_face_load(const uint8_t *data, size_t len, cadran_face_t **out_
 void      cadran_face_free(cadran_face_t *face);
 uint8_t   cadran_face_widget_count(const cadran_face_t *face);
 
-/* Renders every widget in `face` into `fb` (a canonical framebuffer sized
- * board_fb_size() bytes, in the format board->caps.disp_kind implies).
- * A widget whose bind_id resolves to no value (provider not available)
- * is skipped, not an error - see design doc §3. */
-esp_err_t cadran_render(const cadran_face_t *face, uint8_t *fb, const board_desc_t *board);
+/* Renders every widget in `face` into ctx->fb (one stripe's buffer, or
+ * the whole panel for a non-striped board - see gfx/text.h's gfx_ctx_t
+ * and docs/design/display-regions.md). A widget whose bind_id resolves
+ * to no value (provider not available) is skipped, not an error - see
+ * design doc §3. A widget straddling ctx's stripe boundary is clipped,
+ * not skipped - the same per-pixel bounds check that already clips at
+ * the panel edge. */
+esp_err_t cadran_render(const cadran_face_t *face, const gfx_ctx_t *ctx);
 
 /* Bring-up self-test: builds a small hand-authored face in memory, runs
  * it through cadran_face_load() + cadran_render() into a scratch

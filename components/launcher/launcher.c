@@ -26,8 +26,18 @@
 static const char *TAG = "launcher";
 
 extern const js_module_def_t jw_ui_module;
-extern void jw_ui_bind_fb(uint8_t *fb);
+extern void jw_ui_bind_fb(const gfx_ctx_t *ctx);
 extern bool jw_ui_take_dirty(void);
+
+/* Same budget js_call_hook() (unruh/engine_quickjs.c) gives a single
+ * onRender() - shared here so the launcher's per-stripe render pass
+ * (below) enforces the *same* half-second across all stripes combined,
+ * not half a second *per stripe* (16 stripes x 500 ms would be an 8 s
+ * worst case, see docs/design/display-regions.md §6). Kept as its own
+ * constant, not read out of js_engine_t (opaque to the launcher) - the
+ * two budgets are conceptually the same number by design, not coupled
+ * by a shared variable. */
+#define KB_RENDER_PASS_BUDGET_MS 500
 
 typedef struct {
     js_engine_t  *eng;
@@ -107,18 +117,58 @@ static bool app_boot(const char *id) {
     return true;
 }
 
+/* Calls JS_HOOK_ON_RENDER once per stripe (docs/design/display-regions.md
+ * §6) - once total on a non-striped board (caps.stripe_lines == 0),
+ * identical to what this function did before stripes existed. jw.ui is
+ * rebound to each stripe's gfx_ctx_t before every call, invisibly to app
+ * code (still panel-absolute x/y - see js_ui.c). onRender() must be
+ * idempotent under this model: it's the same call, run N times, not N
+ * different calls - §6's whole argument for why that's an acceptable
+ * (in fact already-satisfied, for this project's own examples)
+ * constraint rather than a silent trap.
+ *
+ * The budget ceiling is tracked here, across the whole pass, not inside
+ * js_call_hook() (which still gives every individual call its own
+ * hook_budget_ms - a real backstop if one single stripe's call hangs
+ * forever) - a hung app gets KB_RENDER_PASS_BUDGET_MS total, not that
+ * much again per stripe. Kept in the launcher rather than the engine
+ * layer on purpose: this is launcher/rendering-model logic, the engine
+ * shouldn't need to know stripes exist at all (same reasoning as moving
+ * the App()-only check out of js_load_app() and into app_boot()). */
 static void app_render_if_dirty(void) {
     if (!L.app_ok) return;
-    if (js_call_hook(L.eng, JS_HOOK_ON_RENDER, NULL, NULL) != JS_OK) {
-        app_fail("render");
-        return;
+    const board_desc_t *b = board_get();
+    uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    int64_t pass_deadline_us = 0;
+    bool any_dirty = false;
+
+    if (b->display->begin_frame) b->display->begin_frame();
+    for (int y = 0; y < b->caps.disp_h; y += stripe) {
+        int h = stripe;
+        if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
+        gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
+        jw_ui_bind_fb(&ctx);
+
+        if (pass_deadline_us == 0) {
+            pass_deadline_us = esp_timer_get_time() + (int64_t)KB_RENDER_PASS_BUDGET_MS * 1000;
+        } else if (esp_timer_get_time() >= pass_deadline_us) {
+            ESP_LOGE(TAG, "app '%s' render pass exceeded %d ms across stripes, aborting frame",
+                     L.app_id, KB_RENDER_PASS_BUDGET_MS);
+            app_fail("render");
+            return;
+        }
+
+        if (js_call_hook(L.eng, JS_HOOK_ON_RENDER, NULL, NULL) != JS_OK) {
+            app_fail("render");
+            return;
+        }
+        js_pump_jobs(L.eng);
+        if (jw_ui_take_dirty()) {
+            any_dirty = true;
+            b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
+        }
     }
-    js_pump_jobs(L.eng);
-    if (jw_ui_take_dirty()) {
-        const board_desc_t *b = board_get();
-        b->display->blit(L.fb, board_fb_size());
-        b->display->update(false);
-    }
+    if (any_dirty) b->display->end_frame(false);
 }
 
 static void app_suspend_and_sleep(void) {
@@ -186,7 +236,16 @@ static void js_task(void *arg) {
 
     L.fb = heap_caps_malloc(board_fb_size(),
         b->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
-    jw_ui_bind_fb(L.fb);
+    /* Default/safe binding before app_boot() runs onInit/onResume (in
+     * case either draws, unusual but not disallowed) - app_render_if_
+     * dirty()'s own per-stripe loop rebinds for real once rendering
+     * actually starts. height must match what L.fb was actually sized
+     * for (board_fb_size(): one stripe, or the whole panel if
+     * stripe_lines is 0) - not b->caps.disp_h directly, which would
+     * overrun a stripe-sized buffer. */
+    uint16_t boot_h = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    gfx_ctx_t boot_ctx = { .fb = L.fb, .board = b, .origin_y = 0, .height = boot_h };
+    jw_ui_bind_fb(&boot_ctx);
 
     /* TODO: choose current app (NVS "last app", else first watchface). */
     char ids[4][KB_APP_ID_MAX];
@@ -203,11 +262,21 @@ static void js_task(void *arg) {
          * (app_ok stays false) is a real, intentional idle state, not a
          * missing-app bug. */
         ESP_LOGW(TAG, "no complications installed");
-        memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(L.fb, b, 10, 80, "NO APPS", 2);
-        gfx_draw_text(L.fb, b, 10, 110, "atelier push to install", 1);
-        b->display->blit(L.fb, board_fb_size());
-        b->display->update(true);
+        /* Fixed content at panel-absolute coordinates, drawn fresh per
+         * stripe - the same clip mechanism as everywhere else means
+         * this needs no per-stripe logic of its own, just the loop. */
+        uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+        if (b->display->begin_frame) b->display->begin_frame();
+        for (int y = 0; y < b->caps.disp_h; y += stripe) {
+            int h = stripe;
+            if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
+            gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
+            memset(L.fb, 0xFF, board_fb_size());
+            gfx_draw_text(&ctx, 10, 80, "NO APPS", 2);
+            gfx_draw_text(&ctx, 10, 110, "atelier push to install", 1);
+            b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
+        }
+        b->display->end_frame(true);
     }
 
     /* synthesize wake event so the app can react to the wake cause */

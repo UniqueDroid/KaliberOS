@@ -437,7 +437,12 @@ void js_watchface_selftest(void) {
         return;
     }
     memset(fb, 0xFF, board_fb_size());
-    err = cadran_render(face, fb, b);
+    /* board_fb_size() returns one stripe's worth on a striped board -
+     * this bring-up test only ever checks the first stripe (see
+     * cadran/selftest.c's identical note). */
+    int stripe_h = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    gfx_ctx_t wf_ctx = { .fb = fb, .board = b, .origin_y = 0, .height = stripe_h };
+    err = cadran_render(face, &wf_ctx);
     bool render_ok = (err == ESP_OK);
     int64_t render_us = esp_timer_get_time() - t0;
     ESP_LOGI(TAG, "C-path (no engine): load+render %lld us, free heap %u B",
@@ -464,8 +469,9 @@ void js_watchface_selftest(void) {
 #if 0 /* flip to 1 for a hardware verification pass, same as
        * CADRAN_SELFTEST_BLIT_TO_PANEL in cadran/selftest.c */
     if (render_ok && b->display) {
-        esp_err_t berr = b->display->blit(fb, board_fb_size());
-        if (berr == ESP_OK) berr = b->display->update(true);
+        if (b->display->begin_frame) b->display->begin_frame();
+        esp_err_t berr = b->display->blit_region(0, 0, b->caps.disp_w, stripe_h, fb);
+        if (berr == ESP_OK) berr = b->display->end_frame(true);
         ESP_LOGI(TAG, "blit to panel: %s", berr == ESP_OK ? "ok" : esp_err_to_name(berr));
     }
 #endif
