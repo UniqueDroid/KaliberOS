@@ -105,9 +105,6 @@ void app_main(void) {
      * to land in whatever capture is actually running. */
     unsigned store_selftest_bits = kb_store_install_selftest();
 
-    kb_power_cfg_t pcfg = { .idle_timeout_ms = 15000, .tick_interval_s = 60 };
-    ESP_ERROR_CHECK(kb_power_init(&pcfg));
-
     /* Sync mode trigger (project chat 2026-09-04): checked once per wake,
      * not wired as a deep-sleep wake source - that's exactly the kind of
      * change that already cost this project a real bug once (GPIO0/
@@ -116,11 +113,25 @@ void app_main(void) {
      * normal render path runs; unplugging (or timing out) falls straight
      * through to kb_launcher_start() below either way, so a watch left
      * plugged in overnight doesn't get stuck - it just spends each wake's
-     * first KALIBER_NET_SYNC_TIMEOUT_S seconds with the endpoint open. */
+     * first KALIBER_NET_SYNC_TIMEOUT_S seconds with the endpoint open.
+     *
+     * kb_power_init() (below, not here) is what starts the 15s idle
+     * countdown - deliberately AFTER this block, not before it. It used
+     * to run first: with sync mode's own timeout able to run up to 120s,
+     * the 15s idle timer fired and queued its EV_IDLE_TIMEOUT on the bus
+     * long before js_task ever started consuming events, so a watch put
+     * itself right back to sleep the instant someone finished a push -
+     * accidentally-correct timing before, not logically consistent
+     * (found live, 2026-09-04: touching the timer *after* sync mode
+     * doesn't help, the stale event is already queued by then; not
+     * arming it until now is the actual fix). */
     if (b->power->usb_connected && b->power->usb_connected()) {
         ESP_LOGI(TAG, "USB connected - entering sync mode before normal render");
         kb_net_svc_run_sync_mode();
     }
+
+    kb_power_cfg_t pcfg = { .idle_timeout_ms = 15000, .tick_interval_s = 60 };
+    ESP_ERROR_CHECK(kb_power_init(&pcfg));
 
     /* Deliberately after the sync-mode block, not right where the selftest
      * itself ran (see the comment above kb_store_install_selftest()'s call
