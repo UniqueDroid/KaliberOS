@@ -60,6 +60,21 @@ from Zepp's real signatures as closely as ES5 allows - the parts that
 differ (§3's capability values, no `import`) are called out explicitly,
 not left implicit.
 
+**This is the divergence with the biggest portability cost, and it's
+worth naming as a trade-off, not just a syntax detail** (review round,
+project chat 2026-09-05): `import { X } from '@zos/sensor'; new X()`
+vs. `jw.sensors.X()` means a real Zepp face's sensor-handling code
+cannot be copy-pasted into a Kaliber Complication unchanged - every
+`new Foo()` call site needs a manual edit, even though the method names
+on the resulting object are otherwise identical. Not a reason to change
+it here (ES5/no-module-loader is an existing, load-bearing project
+constraint, not something this doc reopens) - but a real, load-bearing
+choice, so it goes in §6 as an open point (a thin compatibility shim -
+e.g. a global `function Time() { return jw.sensors.Time() }` per module,
+letting `new Time()` keep working - is mechanical to add later if
+porting friction turns out to matter enough to justify it) rather than
+being silently accepted as free.
+
 ## 2. Manifest field for required modules
 
 Extends the *existing* mechanism (`kb_manifest_t.perm_net/perm_storage/
@@ -74,6 +89,14 @@ needed, not a new mechanism:
   weil es das einzige Schreibende ist"*). Lumping it under `"sensors"`
   would be conceptually wrong - a face that can *only* read shouldn't
   need to declare a write permission it never uses, and vice versa.
+  **A deliberate divergence from Zepp, flagged as such** (review round,
+  project chat 2026-09-05): Zepp's own `Vibrator` lives under `Sensor`
+  in its docs nav (`docs.zepp.com`'s Sensor category lists Vibrator
+  alongside Battery/Step/Time) even though it writes, not reads. Kept
+  separate here anyway because the permission split is more honest this
+  way, not because Zepp does it differently - same rule §4 applies to
+  `isCharging()`, stated once here so this doc doesn't read as careful
+  about one divergence and silent about another.
 - **Permission stays coarse (per category), capability stays per-module**
   (§3) - a manifest says `"permissions": ["sensors", "device"]` to get
   the `jw.sensors`/`jw.device` namespaces to exist at all; it does not
@@ -114,6 +137,17 @@ Two questions that sound similar and are not (project chat 2026-09-05):
   the exact same shaped problem (`cadran-watchface-engine.md` §3: *"A
   face that binds an unavailable provider gets defined degradation: the
   widget is skipped, not an error"*) - same answer, one layer up.
+
+**The concrete rule, stated once so every module in §4 can just point
+back here** (review round, project chat 2026-09-05 - this was the actual
+decision, worth spelling out instead of leaving each module to phrase it
+slightly differently): a method whose normal return type is a `number`
+returns **`null`** when the capability is missing; a method whose normal
+return type is a `boolean` (only `isCharging()` so far) also returns
+**`null`**, not `false` - `false` reads as "confirmed not charging", a
+real answer, indistinguishable from "don't know". `null` is unambiguous
+in both cases and matches what `typeof x === 'number'`/`typeof x ===
+'boolean'` checks in a face's own code would expect to guard against.
 
 Every module below states its capability gate explicitly (which
 `board_desc_t.caps` field decides it) - `caps` is what a board can query
@@ -173,11 +207,20 @@ it at all yet (AXP2101 not wired up, `board.c`'s own TODO) - both boards
 report "not available" today, correctly, not a fake reading.
 `isCharging()` needs a **new** `power_ops_t` field (`bool
 (*charging)(void)`, optional/nullable like `usb_connected` already is) -
-neither board can answer it yet (needs the AXP2101 on the C6, an actual
-USB/charge-detect circuit on watchy_v3 beyond the existing raw
+**genuinely board-dependent by construction, not just "not implemented
+yet on either board today"** (review round, project chat 2026-09-05): a
+real charge/CHRG pin read directly off GPIO (watchy_v3's likely
+eventual path - no PMIC on that board at all, see `pins.h`) and an
+AXP2101 register read over I2C (waveshare_c6_amoled's only possible
+path - no charge-sense GPIO exists on that board) are two structurally
+different implementations of the same `power_ops_t` function pointer, a
+textbook capability case per §3's own rule - never assume `isCharging`
+is universally answerable just because one board eventually answers it.
+Neither board can answer it yet today (needs the AXP2101 driver on the
+C6, an actual charge-detect circuit on watchy_v3 beyond the existing raw
 `usb_connected()` VBUS pin, which conflates "plugged in" with
 "charging" - not the same fact, matching this section's own "don't
-guess" rule).
+guess" rule) - `null` on both until then, per §3's rule.
 
 ### Step
 
@@ -274,6 +317,10 @@ resolved here.
   flagged, not decided.
 - Finer-than-category manifest permissions (e.g. "sensors but not
   Step") - nothing in the first wave needs it (§2).
+- **A `new Foo()`-compatible shim over the factory calls (§1)** - not
+  built now, flagged as the real fix if Zepp-face porting friction turns
+  out to matter more than assumed; §1 sketches the mechanical shape
+  (a global wrapper function per module) without committing to it.
 
 ## 7. Roadmap placement
 
