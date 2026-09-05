@@ -58,6 +58,15 @@ extern bool js_watchface_has_face(void);
 extern void js_watchface_reset(void);
 extern esp_err_t js_watchface_build(const board_desc_t *board, uint8_t **out_buf, size_t *out_len);
 
+extern const js_module_def_t jw_sensors_module;
+extern const js_module_def_t jw_device_module;
+/* Force-stops the vibration motor + cancels its auto-stop timer
+ * (unruh/modules/js_device.c) - called on every engine teardown below,
+ * not just a clean JS stop() call, per js-api.md §4's Vibrator safety
+ * ceiling. Safe to call even if jw_device was never registered for this
+ * app (s_active starts false). */
+extern void jw_device_force_stop(void);
+
 /* Same budget js_call_hook() (unruh/engine_quickjs.c) gives a single
  * onRender() - shared here so the launcher's per-stripe render pass
  * (below) enforces the *same* half-second across all stripes combined,
@@ -127,6 +136,8 @@ static bool app_boot(const char *id) {
      * js_watchface_selftest(). */
     js_register_module(L.eng, &jw_ui_module);
     js_register_module(L.eng, &jw_watchface_module);
+    if (L.mf.perm_sensors) js_register_module(L.eng, &jw_sensors_module);
+    if (L.mf.perm_device)  js_register_module(L.eng, &jw_device_module);
     /* if (L.mf.perm_net)     js_register_module(L.eng, &jw_net_module);   */
     /* if (L.mf.perm_storage) js_register_module(L.eng, &jw_storage_module); */
 
@@ -168,6 +179,7 @@ static bool app_boot(const char *id) {
          * rendering never needs the engine, not just that it happens to
          * still work while it's around. */
         js_watchface_reset();
+        jw_device_force_stop();
         js_destroy(L.eng);
         L.eng = NULL;
         if (err != ESP_OK) {
@@ -222,6 +234,7 @@ static void teardown_engine_if_running(void) {
         }
         free(state);
     }
+    jw_device_force_stop();
     if (L.eng) {
         js_destroy(L.eng);
         L.eng = NULL;

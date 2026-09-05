@@ -14,11 +14,8 @@ extern "C" {
 const cadran_widget_rec_t *cadran_face_widgets(const cadran_face_t *face);
 const char *cadran_face_string(const cadran_face_t *face, uint16_t str_ref);
 
-/* Resolves one provider. Returns false if unavailable (unknown id, no
- * board hook, or a not-yet-implemented app.N slot) - the caller then
- * skips the widget per the design doc's degradation rule. */
-bool cadran_provider_get(cadran_provider_id_t id, const board_desc_t *board,
-                          cadran_value_t *out);
+/* cadran_provider_get() itself is declared in the public cadran.h now -
+ * js-api.md's jw.sensors needs it too, see that declaration's comment. */
 
 #ifdef __cplusplus
 }

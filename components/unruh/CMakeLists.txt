@@ -12,6 +12,7 @@ endif()
 
 idf_component_register(
     SRCS "${ENGINE_SRC}" "modules/js_ui.c" "modules/js_watchface.c"
+         "modules/js_sensors.c" "modules/js_device.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "modules"
     REQUIRES board_hal core

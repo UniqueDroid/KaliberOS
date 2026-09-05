@@ -683,6 +683,7 @@ esp_err_t kb_store_read_manifest(const char *id, kb_manifest_t *out) {
             if (strcmp(p->valuestring, "net") == 0) out->perm_net = true;
             else if (strcmp(p->valuestring, "storage") == 0) out->perm_storage = true;
             else if (strcmp(p->valuestring, "sensors") == 0) out->perm_sensors = true;
+            else if (strcmp(p->valuestring, "device") == 0) out->perm_device = true;
         }
     }
     err = ESP_OK;

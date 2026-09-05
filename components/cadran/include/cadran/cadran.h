@@ -17,6 +17,7 @@
 #include "esp_err.h"
 #include "board_hal/board.h"
 #include "gfx/text.h"
+#include "cadran/face_format.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +48,19 @@ esp_err_t cadran_render(const cadran_face_t *face, const gfx_ctx_t *ctx);
  * (roadmap step 6) and can be exercised through an actual installed app
  * instead. */
 void cadran_selftest(void);
+
+/* Resolves one provider (time/date/battery - see face_format.h's
+ * cadran_provider_id_t). Returns false if unavailable (unknown id, no
+ * board hook, or a not-yet-implemented app.N slot) - a Cadran widget
+ * skips itself on false (design doc §3); jw.sensors.Time()/Battery()
+ * (unruh/modules/js_sensors.c) call this same function for the data
+ * they don't already get elsewhere - one provider table, two callers,
+ * per docs/design/js-api.md §4's Time section, not two implementations
+ * of "read the clock" to keep in sync. Was internal-only
+ * (cadran_internal.h) until js-api.md needed a second caller outside
+ * this component. */
+bool cadran_provider_get(cadran_provider_id_t id, const board_desc_t *board,
+                          cadran_value_t *out);
 
 #ifdef __cplusplus
 }

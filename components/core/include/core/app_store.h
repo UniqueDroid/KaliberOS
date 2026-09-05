@@ -37,6 +37,11 @@ typedef struct {
     bool          perm_net;
     bool          perm_storage;
     bool          perm_sensors;
+    /* jw.device (docs/design/js-api.md §2) - separate from perm_sensors
+     * on purpose: the one write/actuator category (Vibrator) in the
+     * first wave, kept out of "sensors" so a read-only face doesn't need
+     * to declare a permission it never uses, and vice versa. */
+    bool          perm_device;
     /* entry file for the engine this board runs, resolved at load time */
     char          entry[32];
 } kb_manifest_t;
