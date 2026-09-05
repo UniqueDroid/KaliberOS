@@ -140,9 +140,10 @@ void app_main(void) {
     /* Bitmask, not just pass/fail (project chat 2026-09-04: a bare bool
      * here cost a whole extra flash/test cycle to find out WHICH check
      * failed, since app_store.c's own detailed line runs too early to
-     * reliably capture) - bit 0 install, 1 listed, 2 manifest, 3
+     * reliably capture) - bit 0 install, 1 hidden (reserved id excluded
+     * from kb_store_list(), see app_store.c 2026-09-05), 2 manifest, 3
      * bytecode, 4 tamper-rejected; see app_store.c's KB_STORE_SELFTEST_*. */
-    ESP_LOGI(TAG, "store selftest: %s (bits=0x%02x: install=%d listed=%d manifest=%d bytecode=%d tamper=%d)",
+    ESP_LOGI(TAG, "store selftest: %s (bits=0x%02x: install=%d hidden=%d manifest=%d bytecode=%d tamper=%d)",
              store_selftest_bits == 0x1F ? "PASS" : "FAIL", store_selftest_bits,
              (store_selftest_bits >> 0) & 1, (store_selftest_bits >> 1) & 1,
              (store_selftest_bits >> 2) & 1, (store_selftest_bits >> 3) & 1,

@@ -290,6 +290,12 @@ static char *path_of_in(const char *dir, const char *file) {
     return p;
 }
 
+/* Structural validity only - a "."-prefixed id (kb_store_install_selftest()'s
+ * reserved namespace) passes here on purpose, same as any other id. What
+ * keeps a real package from claiming one is install_impl()'s separate
+ * allow_reserved_id check, right after this one runs - two different
+ * concerns (is this a legal directory name vs. who's allowed to use it),
+ * deliberately not merged into one. */
 static bool valid_id(const char *id) {
     if (!id || !id[0] || strlen(id) >= KB_APP_ID_MAX) return false;
     /* No path traversal - id becomes a literal directory name under
@@ -365,7 +371,15 @@ static bool copy_range_to_file(FILE *src, size_t off, size_t len, const char *ds
 
 /* ------------------------------------------------------------- install */
 
-esp_err_t kb_store_install(const char *pkg_path, char out_id[KB_APP_ID_MAX]) {
+/* allow_reserved_id: only true for kb_store_install_selftest()'s own two
+ * calls (below, same file) - its embedded package is the one legitimate
+ * user of the reserved "." prefix (see valid_id() and the reserved-id
+ * check just past manifest parsing). Every other caller, in particular
+ * net_svc.c's HTTP handler for untrusted network pushes, goes through the
+ * kb_store_install() wrapper below with this false, so nothing arriving
+ * over the wire can ever claim a reserved id. */
+static esp_err_t install_impl(const char *pkg_path, char out_id[KB_APP_ID_MAX],
+                               bool allow_reserved_id) {
     if (!pkg_path) return ESP_ERR_INVALID_ARG;
 
     FILE *f = fopen(pkg_path, "rb");
@@ -478,6 +492,20 @@ esp_err_t kb_store_install(const char *pkg_path, char out_id[KB_APP_ID_MAX]) {
         ESP_LOGE(TAG, "install: manifest 'id' missing or invalid");
         goto out;
     }
+    /* Reserved namespace (project chat 2026-09-05): an id starting with
+     * "." is kb_store_install_selftest()'s own, never a real package's -
+     * kb_store_list() already excludes "."-prefixed entries (readdir()
+     * filter below), so this is what makes that exclusion airtight rather
+     * than incidental: without this check, a real push could still claim
+     * a "."-id, become invisible to the menu/watchface-fallback list, and
+     * (worse) collide with whatever the selftest itself is doing that
+     * boot. Root cause of a real bug this closes: the selftest used to
+     * install/remove the *same* id ("de.jan.hello") the shipped example
+     * uses, silently deleting a real install on the next boot. */
+    if (!allow_reserved_id && j_id->valuestring[0] == '.') {
+        ESP_LOGE(TAG, "install: id '%s' is reserved (leading '.')", j_id->valuestring);
+        goto out;
+    }
     if (!cJSON_IsNumber(j_abi) || (uint32_t)j_abi->valuedouble != KB_APP_ABI_VERSION) {
         ESP_LOGE(TAG, "install: abi mismatch: pkg=%s fw=%d",
                  j_abi ? cJSON_Print(j_abi) : "(missing)", KB_APP_ABI_VERSION);
@@ -573,7 +601,17 @@ out:
     return result;
 }
 
+esp_err_t kb_store_install(const char *pkg_path, char out_id[KB_APP_ID_MAX]) {
+    return install_impl(pkg_path, out_id, false);
+}
+
 int kb_store_list(char ids[][KB_APP_ID_MAX], int max) {
+    /* d_name[0] != '.' does double duty: hides littlefs/POSIX dotfiles
+     * (there are none today, but readdir() would hand them back same as
+     * any other entry) *and* is what keeps kb_store_install_selftest()'s
+     * reserved-namespace ids (see install_impl()'s allow_reserved_id)
+     * out of the menu/watchface-fallback list - the two purposes share
+     * one filter deliberately, not by coincidence. */
     DIR *d = opendir(ROOT);
     if (!d) return 0;
     int n = 0;
@@ -704,18 +742,30 @@ esp_err_t kb_store_write_state(const char *id, const char *json) {
  * cadran_selftest()/js_watchface_selftest() - "notfalls über ein
  * eingebettetes Testpaket" (project chat 2026-09-03): no net_svc.c yet
  * to actually deliver a package over HTTP, so a real .comp built by
- * atelier.py (examples/complications/hello, signed with the test key
- * KALIBER_STORE_HMAC_KEY_OVERRIDE must be set to for this to pass) is
- * embedded and installed directly. Exercises the full path: HMAC verify
- * -> unpack -> manifest validate -> stage -> swap into place -> list/
- * read-manifest/read-bytecode round-trip - then a tampered copy to
- * confirm rejection, and removes what it installed either way so it
- * doesn't race seed_hello_app()'s separate "hello" id for which app the
- * launcher boots (see main.c's seed_hello_app() comment). Temporary,
- * remove alongside the other bring-up selftests once there's a real
- * install path exercising this (net_svc.c). */
+ * atelier.py, signed with the test key KALIBER_STORE_HMAC_KEY_OVERRIDE
+ * must be set to for this to pass, is embedded and installed directly.
+ * Exercises the full path: HMAC verify -> unpack -> manifest validate ->
+ * stage -> swap into place -> list/read-manifest/read-bytecode round-trip
+ * - then a tampered copy to confirm rejection, and removes what it
+ * installed either way.
+ *
+ * The embedded package's manifest id is ".selftest.hello" - its own
+ * source, not examples/complications/hello's real "de.jan.hello" (project
+ * chat 2026-09-05: it used to reuse that id, and this selftest's own
+ * cleanup - kb_store_remove(id) below - silently deleted a real user
+ * install under the same id on the next boot; a real bug, not a
+ * hypothetical). install_impl()'s allow_reserved_id lets only this
+ * function's two calls use a "."-prefixed id at all; kb_store_list()'s
+ * dotfile filter keeps it out of the menu/watchface-fallback list the
+ * same way it always did.
+ *
+ * Temporary, remove alongside the other bring-up selftests once there's
+ * a real install path exercising this (net_svc.c) - done as of
+ * 2026-09-05 (a real push, `atelier push`, round-tripped on hardware) but
+ * still here per project chat: safe to keep running as a boot-time
+ * regression check now that the id collision is fixed. */
 #define KB_STORE_SELFTEST_INSTALL   0x01
-#define KB_STORE_SELFTEST_LISTED    0x02
+#define KB_STORE_SELFTEST_HIDDEN    0x02
 #define KB_STORE_SELFTEST_MANIFEST  0x04
 #define KB_STORE_SELFTEST_BYTECODE  0x08
 #define KB_STORE_SELFTEST_TAMPER    0x10
@@ -734,18 +784,24 @@ unsigned kb_store_install_selftest(void) {
     fclose(pf);
 
     char id[KB_APP_ID_MAX];
-    esp_err_t err = kb_store_install(pkg_path, id);
-    bool install_ok = (err == ESP_OK) && strcmp(id, "de.jan.hello") == 0;
+    esp_err_t err = install_impl(pkg_path, id, true);
+    bool install_ok = (err == ESP_OK) && strcmp(id, ".selftest.hello") == 0;
     if (!install_ok) {
         ESP_LOGE(TAG, "FAIL: install: %s (id='%s')", esp_err_to_name(err), install_ok ? id : "?");
         unlink(pkg_path);
         return 0;
     }
 
+    /* "hidden", not "listed" (project chat 2026-09-05, alongside the
+     * reserved-namespace fix above): kb_store_list() deliberately excludes
+     * "."-prefixed ids, so a reserved-namespace package that DID show up
+     * here would be the bug, not the other way around - this now checks
+     * the hiding itself works, not (as it used to, back when this used
+     * the real "de.jan.hello" id) that a normal install is enumerable. */
     char ids[8][KB_APP_ID_MAX];
     int n = kb_store_list(ids, 8);
-    bool listed = false;
-    for (int i = 0; i < n; i++) if (strcmp(ids[i], id) == 0) listed = true;
+    bool hidden = true;
+    for (int i = 0; i < n; i++) if (strcmp(ids[i], id) == 0) hidden = false;
 
     kb_manifest_t mf;
     bool mf_ok = kb_store_read_manifest(id, &mf) == ESP_OK
@@ -828,18 +884,18 @@ unsigned kb_store_install_selftest(void) {
             unlink(tamper_path);
         } else {
             char tamper_id[KB_APP_ID_MAX] = {0};
-            esp_err_t tamper_err = kb_store_install(tamper_path, tamper_id);
+            esp_err_t tamper_err = install_impl(tamper_path, tamper_id, true);
             tamper_rejected = (tamper_err != ESP_OK);
             unlink(tamper_path);
         }
-        kb_store_remove("de.jan.hello"); /* in case rejection somehow still wrote something */
+        kb_store_remove(".selftest.hello"); /* in case rejection somehow still wrote something */
     }
     unlink(pkg_path);
 
-    bool pass = install_ok && listed && mf_ok && bc_ok && tamper_rejected;
-    ESP_LOGI(TAG, "%s: install=ok listed=%s manifest=%s bytecode=%s(%uB) tamper_rejected=%s",
+    bool pass = install_ok && hidden && mf_ok && bc_ok && tamper_rejected;
+    ESP_LOGI(TAG, "%s: install=ok hidden=%s manifest=%s bytecode=%s(%uB) tamper_rejected=%s",
              pass ? "PASS" : "FAIL",
-             listed ? "yes" : "no", mf_ok ? "ok" : "bad", bc_ok ? "ok" : "bad",
+             hidden ? "yes" : "NO(!)", mf_ok ? "ok" : "bad", bc_ok ? "ok" : "bad",
              (unsigned)bclen, tamper_rejected ? "yes" : "NO(!)");
     /* Bitmask, not just pass/fail - this line runs at ~1s into boot,
      * squarely inside the post-USB-reset window this project's serial
@@ -848,7 +904,7 @@ unsigned kb_store_install_selftest(void) {
      * bool there wouldn't say WHICH check failed - cost a whole extra
      * flash/test cycle finding that out live once already (2026-09-04). */
     return (install_ok ? KB_STORE_SELFTEST_INSTALL : 0)
-         | (listed      ? KB_STORE_SELFTEST_LISTED  : 0)
+         | (hidden      ? KB_STORE_SELFTEST_HIDDEN  : 0)
          | (mf_ok        ? KB_STORE_SELFTEST_MANIFEST : 0)
          | (bc_ok         ? KB_STORE_SELFTEST_BYTECODE : 0)
          | (tamper_rejected ? KB_STORE_SELFTEST_TAMPER : 0);
