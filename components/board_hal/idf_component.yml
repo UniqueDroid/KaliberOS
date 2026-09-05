@@ -1,0 +1,10 @@
+# External deps for waveshare_c6_amoled's display driver only (project
+# chat 2026-09-05) - the real esp_lcd_sh8601 panel driver + QSPI IO
+# support, not the Waveshare BSP itself (that's read as a reference, not
+# a dependency - see board.c's header comment). Harmless for other
+# boards (watchy_v3's SSD1681 path never references these symbols),
+# same as any unused REQUIRES entry.
+dependencies:
+  waveshare/esp_lcd_sh8601: "*"
+  espressif/esp_lcd_panel_io_additions: "^1"
+  idf: ">=5.3"

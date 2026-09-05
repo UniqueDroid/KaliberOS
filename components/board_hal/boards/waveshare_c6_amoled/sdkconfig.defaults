@@ -1,0 +1,6 @@
+# Waveshare ESP32-C6-Touch-AMOLED-2.06: ESP32-C6, 16 MB flash, no PSRAM
+# (matches the board's own official example sdkconfig.defaults - see
+# board.c's header comment for where this was cross-checked).
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y

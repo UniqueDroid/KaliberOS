@@ -101,8 +101,8 @@ whole push.
 
 - a UI/UX concept for the future menu and Complication look-and-feel (watchface, list menus, health/notification/navigation/work-mode screens, design tokens) — reference for `jw.ui`'s widget layer.
 - [Cadran](docs/design/cadran-watchface-engine.md), the planned `components/cadran/` declarative watchface renderer — minute ticks render in pure C from a serialized widget tree, no JS engine boot required. Slots in after the SSD1681 driver and font rasterizer, before MQuickJS.
-- [Display regions](docs/design/display-regions.md), a striped rendering model for panels that don't fit a full framebuffer in RAM (the second board's 410×502 RGB565 AMOLED needs ~402 kB for one frame against 512 kB total SRAM, no PSRAM). Blocks `boards/waveshare_c6_amoled/`.
-- [Launcher states](docs/design/launcher-states.md), the watchface/menu/app model above Cadran — today's launcher just boots the first installed app. Priority: before the second board.
+- [Display regions](docs/design/display-regions.md), a striped rendering model for panels that don't fit a full framebuffer in RAM (the second board's 410×502 RGB565 AMOLED needs ~402 kB for one frame against 512 kB total SRAM, no PSRAM). Unblocked `boards/waveshare_c6_amoled/` (bring-up done, see Status below).
+- [Launcher states](docs/design/launcher-states.md), the watchface/menu/app model above Cadran, done ahead of the second board as planned.
 
 ## Status / Roadmap
 
@@ -146,11 +146,21 @@ Skeleton — architecture is in place, grunt work is flagged:
       the option is set. No SNTP client yet - `time.hm` shows a `"??:??"`
       placeholder (`cadran/providers.c`) until something sets the clock
       (currently: `atelier push`'s `/time` call above).
-- [ ] MQuickJS backend (`engine_mqjs.c`) → unlocks v2/C6 boards
-- [ ] Second board: `waveshare_c6_amoled` (MQuickJS, RGB565, always-on)
-      as a stress test for the HAL - blocked on the
-      [display-regions](docs/design/display-regions.md) design (no PSRAM,
-      a full frame doesn't fit in SRAM)
+- [x] **Second board: `waveshare_c6_amoled`** (RGB565, always-on, real
+      `stripe_lines=32`) - bring-up milestone hardware-verified
+      2026-09-05: boots, SH8601/CO5300 QSPI display initializes, the same
+      default face as watchy_v3 auto-installs and renders correctly
+      (centered relative to `ctx.w`/`ctx.h` once that fix landed - see
+      [display-regions](docs/design/display-regions.md) §9). Go/no-go
+      heap gate **passed with QuickJS** (~62 kB engine, matches watchy_v3
+      closely) - no `engine_mqjs.c` fallback needed after all, the
+      original plan for this board. Open: touch (FT3168) and the AXP2101
+      PMIC (battery/USB-detect) - this board has no physical buttons at
+      all, touch is the only input path and is a real design question of
+      its own (project chat 2026-09-05), not yet built.
+- [ ] MQuickJS backend (`engine_mqjs.c`) - no longer blocking the second
+      board (QuickJS fit after all), still useful for a future smaller/
+      cheaper board
 
 ## Success criteria for the first milestone
 

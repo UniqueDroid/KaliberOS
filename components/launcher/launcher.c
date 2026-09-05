@@ -545,6 +545,14 @@ static void js_task(void *arg) {
 
     L.fb = heap_caps_malloc(board_fb_size(),
         b->caps.has_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_DEFAULT);
+    /* Framebuffer-stripe heap cost, generic across boards (project chat
+     * 2026-09-05, part of the C6 go/no-go gate - display-regions.md §9
+     * step 3): board_fb_size() is the one allocation every board's
+     * caps.stripe_lines choice directly controls, so this is the number
+     * that answers "does a bigger stripe on a bigger panel actually cost
+     * what the design doc's arithmetic predicted." */
+    ESP_LOGI(TAG, "framebuffer stripe: %u B, free heap %u B",
+             (unsigned)board_fb_size(), (unsigned)esp_get_free_heap_size());
     /* Default/safe binding before app_boot() runs onInit/onResume (in
      * case either draws, unusual but not disallowed) - app_render_if_
      * dirty()'s own per-stripe loop rebinds for real once rendering

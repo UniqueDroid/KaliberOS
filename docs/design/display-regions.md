@@ -441,12 +441,24 @@ stress test for the HAL"). Suggested order once this doc is agreed:
    addressing - exactly the kind of thing worth catching before a second
    controller is also new. Confirmed `stripe_lines=0` unaffected before
    reverting to it (the real Watchy value).
-3. `boards/waveshare_c6_amoled/`: CO5300 driver, `stripe_lines=32` (or
-   whatever the real hardware profiling in §6 says), touch/PMIC/RTC.
-   **Go/no-go gate, before building app-level functionality on top**:
-   log free heap after `esp_wifi_init()` + engine init the same way
-   criterion 1 measured it on Watchy (§1a) - confirms QuickJS fits or
-   triggers the `engine_mqjs.c` fallback while the board is still small
-   enough to change course cheaply.
-4. The actual hardware test this was always for: does the same
-   Complication - unmodified - render correctly on both boards.
+3. [x] `boards/waveshare_c6_amoled/`: display driver (SH8601/CO5300,
+   QSPI) + boot, `stripe_lines=32` as planned, hardware-verified
+   2026-09-05 - touch/PMIC/RTC still open (this board has no physical
+   buttons at all, confirmed on hardware; touch is the only input path,
+   deliberately deferred). **Go/no-go gate: PASSED.** Measured on real
+   hardware, same shape criterion 1 used on watchy_v3: free heap after
+   boot ~364 KB, after QuickJS engine init ~62 KB used (matches
+   watchy_v3's number closely - same engine, same ABI), WiFi cost 53,648
+   B entering→AP-up (vs. this doc's §1 estimate of ~52 KB - close), one
+   framebuffer stripe (410×32×2) 26,240 B exactly as predicted. QuickJS
+   fits comfortably; no `engine_mqjs.c` fallback needed on this board.
+4. [x] The actual hardware test this was always for: does the same
+   Complication - unmodified - render correctly on both boards. Yes,
+   with one fix: the default watchface (docs/design/launcher-states.md
+   §4) originally hardcoded x/y for watchy_v3's 200×200 panel and
+   rendered off-center on the C6's 410×502 one - corrected to center
+   relative to `ctx.w`/`ctx.h` (already passed into `build()`, Cadran
+   doc §3) instead of adding board-specific coordinates. Same firmware,
+   same Complication, two very different boards, both correct - this is
+   what "the HAL actually carries the abstraction" looks like verified,
+   not assumed.
