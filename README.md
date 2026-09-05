@@ -85,8 +85,9 @@ device (a rejected install logged as `HMAC verification failed` is the
 store working correctly, not a bug - re-pack with `--key <your device's
 own key>`), but a freshly flashed device does show a default clock face
 out of the box regardless - `docs/design/launcher-states.md` §4's
-auto-install, unblocked 2026-09-05 alongside Cadran roadmap step 6, not
-via `--key` at all (see that section for the fixed-key caveat).
+auto-install, unblocked 2026-09-05 alongside Cadran roadmap step 6 -
+signed at runtime with this device's own key, not via `--key` at all
+(see that section for how).
 
 `push` also sets the device's clock (`POST /time`, alongside `/install`)
 - watchy_v3 has no RTC chip and no SNTP client, so without this the
@@ -133,9 +134,9 @@ Skeleton — architecture is in place, grunt work is flagged:
       render, and tear down again through `app_boot()`) both
       hardware-verified 2026-09-05. Lands the default out-of-box face
       (`examples/watchfaces/default`, `launcher-states.md` §4) -
-      auto-installed on first boot, no push required, though still via
-      §4's fixed-key shortcut rather than its recommended per-device-key
-      mechanism (flagged there, not done). Real gap: no `face.bin`
+      auto-installed on first boot, no push required, signed at runtime
+      with this device's own key (§4's actual recommendation - the
+      fixed-key shortcut used earlier the same day is gone). Real gap: no `face.bin`
       caching yet, every wake re-runs `build()` (Cadran doc §9).
 - [x] RTC clock source: `CONFIG_RTC_CLK_SRC_EXT_CRYS` (was: internal RC
       oscillator, drifts orders of magnitude more) - watchy_v3 has no RTC

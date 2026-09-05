@@ -138,20 +138,20 @@ rather than something this doc needs to solve now.
 
 ## 4. Default face - what a fresh watch shows
 
-**Status (2026-09-05): implemented, but via the fixed-key shortcut this
-section explicitly argues against below, not the resolution it actually
-recommends.** `examples/watchfaces/default` + `kb_store_install_default_
-face()` (`app_store.c`) installs a real Cadran clock face on first boot
-through the unmodified `kb_store_install()` path - but the embedded
-package is signed with `KALIBER_STORE_HMAC_KEY_OVERRIDE`, the same
-fixed test key `store_install_selftest_pkg.h` uses, not a per-device key
-computed at runtime. Correct today because this fleet's current
-sdkconfig has that override set; not yet correct for a real per-device-
-random-key device, which is exactly the gap the "Resolution" paragraph
-below describes closing. That real fix - compute the HMAC at runtime
-with `get_hmac_key()`'s own output, assemble the tar container in C -
-is still open, tracked here rather than done, so it doesn't quietly
-become "already handled" the next time this doc is read.
+**Status (2026-09-05): implemented per this section's actual recommendation
+below**, not the fixed-key shortcut an earlier same-day pass used.
+`examples/watchfaces/default` + `kb_store_install_default_face()`
+(`app_store.c`) installs a real Cadran clock face on first boot: embeds
+only the *unsigned* manifest.json + bytecode (`default_face_pkg.h`, no
+baked signature anywhere in the repo), signs them at runtime with
+`get_hmac_key()`'s own output (this device's real per-device key, or the
+Kconfig override on fleets that provision one - the function doesn't
+care which), assembles a tar container, and installs it through the
+unmodified `kb_store_install()` path - the exact chain described below,
+literally, not just in spirit. Verified live: a device that already had
+the earlier fixed-key-signed copy got it silently replaced with a
+properly-signed one on its next boot (the "already installed" guard
+only skips for a package with a *different* id).
 
 The constraint from the task: a freshly flashed watch shows the time,
 not nothing - but not via `seed_apps.c`'s pattern (bytecode written

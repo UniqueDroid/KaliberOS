@@ -203,8 +203,8 @@ declarative face with no JS engine involvement at all. Suggested order:
    as designed above) is still open. Also lands the default out-of-box
    face this step existed to enable (§4 below, `examples/watchfaces/
    default`) - auto-installed on first boot via
-   `kb_store_install_default_face()` (`app_store.c`), same fixed-key
-   caveat §4 already flags for its own embedded-package approach.
+   `kb_store_install_default_face()` (`app_store.c`), signed at runtime
+   with this device's own key (§4's real mechanism, not a fixed key).
 
 Step 1–3 need no JS at all and can be built against the hello example's
 partition layout — good parallel track while the QuickJS build lands.
