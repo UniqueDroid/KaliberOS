@@ -1,3 +1,4 @@
+#include <time.h>
 #include "esp_sleep.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -32,10 +33,34 @@ void kb_power_touch(void) {
 
 void kb_power_deep_sleep(void) {
     const board_desc_t *b = board_get();
-    ESP_LOGI(TAG, "entering deep sleep, tick in %lus",
-             (unsigned long)s_cfg.tick_interval_s);
+
+    /* Align to the next wall-clock minute boundary, not a flat
+     * tick_interval_s from whatever instant sleep_prepare() happens to
+     * run at (project chat 2026-09-05, found live: the clock face showed
+     * the previous minute for up to 59s after every tick-wake, since
+     * "60s from now" almost never lands exactly on a :00 second). Only
+     * meaningful for the once-a-minute tick specifically (tick_interval_s
+     * == 60 - anything else configured has no such natural boundary to
+     * align to) and only once the clock is actually set - same tm_year
+     * >= 100 convention cadran/providers.c uses to tell "never synced"
+     * from "really is year 1970"; with no time source yet there's no
+     * boundary to align to either, so fall back to the flat interval
+     * exactly as before. */
+    uint64_t sleep_us = (uint64_t)s_cfg.tick_interval_s * 1000000ULL;
+    if (s_cfg.tick_interval_s == 60) {
+        time_t now = time(NULL);
+        struct tm tmv;
+        localtime_r(&now, &tmv);
+        if (tmv.tm_year >= 100) {
+            int secs_to_next_minute = 60 - tmv.tm_sec;
+            if (secs_to_next_minute <= 0) secs_to_next_minute = 60;
+            sleep_us = (uint64_t)secs_to_next_minute * 1000000ULL;
+        }
+    }
+    ESP_LOGI(TAG, "entering deep sleep, tick in %llu us",
+             (unsigned long long)sleep_us);
     b->power->sleep_prepare();
-    esp_sleep_enable_timer_wakeup((uint64_t)s_cfg.tick_interval_s * 1000000ULL);
+    esp_sleep_enable_timer_wakeup(sleep_us);
     esp_deep_sleep_start();
 }
 
