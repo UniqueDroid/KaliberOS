@@ -185,8 +185,14 @@ static void draw_no_apps_screen(void) {
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, 10, 80, "NO APPS", 2);
-        gfx_draw_text(&ctx, 10, 110, "atelier push to install", 1);
+        gfx_draw_text(&ctx, 10, 80, "NO APPS", 3);
+        /* Scale 2 (16px/glyph): "atelier push" is 12 chars, 192px - the
+         * widest a detail line gets on this 200px panel before clipping
+         * (docs/design/native-screens.md's hierarchy rule); x=4 not the
+         * usual 10 to keep that margin. Full instructions belong in the
+         * README, not squeezed onto the panel - this is a pointer, not
+         * a manual. */
+        gfx_draw_text(&ctx, 4, 110, "atelier push", 2);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -207,7 +213,7 @@ static void draw_menu_placeholder(void) {
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, 10, 80, "MENU", 2);
+        gfx_draw_text(&ctx, 10, 70, "MENU", 3);
         gfx_draw_text(&ctx, 10, 110, "SELECT: open", 1);
         gfx_draw_text(&ctx, 10, 125, "BACK:   watchface", 1);
         gfx_draw_text(&ctx, 10, 140, "DOWN:   install", 1);

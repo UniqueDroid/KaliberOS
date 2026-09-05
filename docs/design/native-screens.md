@@ -15,19 +15,34 @@ Panel: watchy_v3, 200×200 monochrome e-ink (SSD1681). Font: built-in 8×8
 bitmap (`gfx/text.h`), drawn at `scale` × that per glyph - so a line of N
 characters is `N × 8 × scale` px wide, and must stay ≤ 200 to avoid
 wrapping/clipping. That one constraint is why every screen below mixes
-scales the way it does: scale 2 (16px/glyph, ≤12 chars/line) reads far
-better than scale 1 (8px/glyph, ≤25 chars/line) but doesn't fit most of
-the instructional hint lines as currently worded.
+scales the way it does - see the hierarchy rule after the table.
 
 ## Screens
 
 | Screen | Function | Trigger | Content (scale) |
 |---|---|---|---|
-| NO APPS | `draw_no_apps_screen()` (launcher.c) | WATCHFACE fallback, nothing installed | "NO APPS" (2) / "atelier push to install" (1, 24 chars - doesn't fit at scale 2 unwrapped) |
-| MENU | `draw_menu_placeholder()` (launcher.c) | SELECT from WATCHFACE | "MENU" (2) / "SELECT: open" (1) / "BACK:   watchface" (1) / "DOWN:   install" (1) |
-| WAKE CHECK | `draw_wake_check_screen()` (launcher.c) | tick/button-wake-from-MENU, idle-from-APP (bring-up only, `docs/design/launcher-states.md` §1 invariants) | "WAKE CHECK" (2) / one-line result (1), shown ~1.5s then continues |
-| Sync mode | `net_svc.c`'s own draw call | DOWN from MENU (was: USB-connected on every boot, retired 2026-09-05) | SSID/password/IP, own layout - not yet reconciled with this table's scale convention |
+| NO APPS | `draw_no_apps_screen()` (launcher.c) | WATCHFACE fallback, nothing installed | "NO APPS" (3) / "atelier push" (2) |
+| MENU | `draw_menu_placeholder()` (launcher.c) | SELECT from WATCHFACE | "MENU" (3) / "SELECT: open" (1) / "BACK:   watchface" (1) / "DOWN:   install" (1) |
+| Sync mode | `net_svc.c`'s `draw_sync_screen()` | DOWN from MENU (was: USB-connected on every boot, retired 2026-09-05) | "SYNC" (3) / SSID, PASS, IP (1 each - see below) |
+| WAKE CHECK | `draw_wake_check_screen()` (launcher.c) | tick/button-wake-from-MENU, idle-from-APP (bring-up only, `docs/design/launcher-states.md` §1 invariants) | "WAKE CHECK" (2) / one-line result (1), shown ~1.5s then continues. Exempt from the hierarchy rule below - a temporary diagnostic aid, not part of the device's actual look, and "WAKE CHECK" itself doesn't fit scale 3 (10 chars, 240px) |
 | hello (example) | `examples/complications/hello/app.js`, via the engine, not this launcher | WATCHFACE fallback (if installed) / APP | "KALIBER" (2) / "WAKES:" (1) / counter (6) |
+
+## Hierarchy rule (resolved 2026-09-05, project chat)
+
+One big headline (scale 3-4, whatever fits the panel width) states what
+the screen *is*; at most one small detail block (scale 1-2) underneath
+carries values worth reading closely. No line that doesn't fit its scale
+unwrapped - if a phrase doesn't fit, the phrase is wrong, not the scale.
+Long instructional text (full command lines, step-by-step) belongs in
+the README, not the panel - a screen points, it doesn't teach.
+
+Concretely, at this panel's 200px width: scale 3 (24px/glyph) fits ≤8
+chars/line, scale 2 (16px/glyph) fits ≤12, scale 1 (8px/glyph) fits ≤25.
+This is why sync mode's SSID/PASS/IP stayed at scale 1 rather than 2 -
+`KaliberOS-CCA5` alone is 14 chars, already over scale 2's budget before
+a "SSID: " label is even added; wrapping three already-short values
+across more lines to gain readability nobody asked for wasn't worth it,
+unlike NO-APPS/MENU/SYNC's headlines, which fit scale 3 outright.
 
 ## Known issue: e-ink ghosting between screens
 
@@ -42,15 +57,3 @@ requests `full=true`. Flagged here rather than guessed at; needs its own
 investigation before any screen redesign work, since a wrong assumption
 about *why* screens bleed into each other would make redesigning them
 not actually fix what's wrong.
-
-## Open decision: hint-line scale
-
-Filed here, not resolved: bumping every hint line (`"atelier push to
-install"`, `"BACK:   watchface"`, etc.) to scale 2 doesn't fit this panel
-at their current wording - each would need shortening or wrapping to two
-lines. Candidates, not yet chosen: (a) shorten wording to fit ≤12 chars/
-line at scale 2, (b) keep hints at scale 1 but improve contrast/spacing
-instead, (c) wrap long hints across two scale-1 lines but bump to scale 2
-where the wording already fits (`"BACK: face"` at 10 chars would). Needs
-one decision, applied everywhere in the table above, not another
-per-screen guess.

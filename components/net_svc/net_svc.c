@@ -102,14 +102,21 @@ static void draw_sync_screen(const char *ssid, const char *pass, const char *ip)
         gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = y, .height = h };
         memset(fb, 0xFF, board_fb_size()); /* white, matches jw_ui clear() */
 
-        gfx_draw_text(&ctx, 10, 10, "SYNC MODE", 2);
+        /* Headline big (docs/design/native-screens.md's hierarchy rule),
+         * detail lines small - SSID/pass/IP don't fit scale 2 on this
+         * 200px panel without wrapping (ssid alone is 14 chars, 224px at
+         * scale 2), and this is exactly the block someone's squinting at
+         * to type into a phone, so unwrapped and legible-at-scale-1 beats
+         * bigger-but-truncated. "POST /install" dropped - that's the
+         * README's job, not the panel's (see its "Building and pushing"
+         * section). */
+        gfx_draw_text(&ctx, 10, 10, "SYNC", 3);
         snprintf(line, sizeof line, "SSID: %s", ssid);
-        gfx_draw_text(&ctx, 10, 50, line, 1);
+        gfx_draw_text(&ctx, 10, 60, line, 1);
         snprintf(line, sizeof line, "PASS: %s", pass);
-        gfx_draw_text(&ctx, 10, 65, line, 1);
+        gfx_draw_text(&ctx, 10, 75, line, 1);
         snprintf(line, sizeof line, "IP:   %s:8080", ip);
-        gfx_draw_text(&ctx, 10, 80, line, 1);
-        gfx_draw_text(&ctx, 10, 110, "POST /install", 1);
+        gfx_draw_text(&ctx, 10, 90, line, 1);
 
         b->display->blit_region(0, y, b->caps.disp_w, h, fb);
     }
