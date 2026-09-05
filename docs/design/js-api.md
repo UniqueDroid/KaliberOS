@@ -305,6 +305,57 @@ Capability gate: **new** `board_desc_t.power_ops_t` (or its own small
 Neither board has this wired up (no motor driver GPIO in either
 `pins.h`) - "not available" on both today.
 
+*(Since decided and built: `vibrator_ops_t` as its own struct, not
+folded into `power_ops_t` - `board_hal/board.h`.)*
+
+## 4a. Provider/module consistency - one source, two facades
+
+Raised once §4 stopped being purely a JS-side concern (project chat
+2026-09-05, prompted by adding a Cadran provider for steps alongside
+`jw.sensors.Step()`): every capability in §4 is now reachable through
+**two** independent facades over the same hardware - `jw.sensors`/
+`jw.device` for an imperative App, `cadran_provider_get()` for a
+declarative Watchface's tick render (§5's lifecycle split is *why* two
+facades exist at all: a Watchface's `build()` has nowhere to receive a
+push callback, so its live data has to come from the C-side renderer
+instead). Two facades means every capability can now be wired up
+correctly on one side and wrong on the other - three rules keep that
+from happening silently:
+
+1. **One source, not two.** A Cadran provider must never talk to a
+   sensor/PMIC/motor directly - it calls the exact same `board_desc_t`
+   op (`power_ops_t`/`sensor_ops_t`/`vibrator_ops_t`) the matching
+   `jw.sensors`/`jw.device` method already calls, the same way
+   `Battery.getCurrent()` (`unruh/modules/js_sensors.c`) calls
+   `cadran_provider_get(CADRAN_PROVIDER_BATTERY_PCT, ...)` instead of
+   re-reading `power_ops_t.battery_mv` itself. Two independent readers
+   of the same hardware are two places the same bug can be fixed once
+   and still exist in the other - this rule is what makes that
+   structurally impossible instead of a matter of remembering.
+2. **"Not available" must resolve identically on both sides.** Both
+   facades gate on the exact same NULL-function-pointer check on the
+   exact same `board_desc_t` field - not two independently-written
+   capability tests that happen to agree today. A Step widget silently
+   showing "0" while `jw.sensors.Step().getCurrent()` correctly returns
+   `null` for the same board would be this doc's own §3 distinction
+   failing exactly where the person looking at the watch would notice -
+   worse than either facade being wrong alone, because the two would
+   visibly disagree with each other.
+3. **How a declarative widget *shows* "not available" is its own
+   question, not an extension of §3's number/boolean rule** - a widget
+   has no `if (x === null)` to write. Cadran already has an answer,
+   `cadran-watchface-engine.md` §3: *"A face that binds an unavailable
+   provider gets defined degradation: the widget is skipped, not an
+   error."* That rule is generic (any widget type, any provider), not
+   specific to text - it's the one case §3's "one clear rule" for JS
+   doesn't cover, because it isn't a JS return value at all. The one
+   documented exception (`time.hm`'s `"??:??"` placeholder,
+   `cadran/providers.c`) is a genuinely different situation - a clock
+   that's merely unsynced, not a sensor that's genuinely absent - and
+   stays an exception for that one provider, not a precedent for
+   letting new capability-absent providers (steps included) invent
+   their own placeholder instead of skipping.
+
 ## 5. Lifecycle split - Watchface vs App
 
 Already true today, not fully written down as a contract until now

@@ -119,6 +119,21 @@ Provider reads happen at render time in C; there is no dirty tracking in
 v1 (a full widget re-render per tick is cheap relative to the e-ink
 refresh).
 
+**One source, not two** (project chat 2026-09-05, once `js-api.md`
+gave the same hardware a second facade, `jw.sensors`/`jw.device` for
+imperative Apps): a provider here must call the exact same
+`board_desc_t` op (`power_ops_t`/`sensor_ops_t`/`vibrator_ops_t`) the
+matching JS module calls, never read the sensor/PMIC itself - the way
+`cadran_provider_get(CADRAN_PROVIDER_BATTERY_PCT, ...)` is the thing
+`jw.sensors`'s `Battery.getCurrent()` calls, not a second mV→% reader.
+A capability-absent provider (steps, once added) fails the *identical*
+NULL-check its JS counterpart fails, for the same reason - see
+`js-api.md` §4a for the full "one source, two facades" rule this
+section is one half of, including why §3's skip-not-error rule (not a
+placeholder) is the answer for every capability-absent provider except
+the one documented exception (`time.hm`'s `"??:??"`, immediately
+below).
+
 ## 6. face.bin format
 
 Little-endian, versioned (`CADRAN_ABI`, independent of the JS bytecode
@@ -208,3 +223,11 @@ declarative face with no JS engine involvement at all. Suggested order:
 
 Step 1–3 need no JS at all and can be built against the hello example's
 partition layout — good parallel track while the QuickJS build lands.
+
+**Not yet started:** a `CADRAN_PROVIDER_STEP_COUNT` (and likely
+`_TARGET`) provider - needed for the js-api.md acceptance-test face
+(time+battery+steps on both boards) and the first real exercise of
+§5's "one source, not two" rule added above, since `jw.sensors.Step()`
+(`unruh/modules/js_sensors.c`) already exists and reads
+`board_desc_t.sensors` directly - the new provider must call the exact
+same `sensor_ops_t` fields, not reimplement the read.
