@@ -75,6 +75,38 @@ letting `new Time()` keep working - is mechanical to add later if
 porting friction turns out to matter enough to justify it) rather than
 being silently accepted as free.
 
+**The shim sketched above only fixes `new` - it isn't the bigger part
+of the gap** (review round, project chat 2026-09-05, the more honest
+effort estimate): real Zepp face code reaches the sensor in the first
+place via `import { Time } from '@zos/sensor'`, and there is no module
+loader here for a shim to hook into at all - a face would still need
+its `import` lines hand-edited to a global reference (or this project
+would need to add a minimal `import`-to-global rewrite step to
+`atelier pack`, a bigger undertaking than a few wrapper functions).
+Making `new Foo()` work again is the easy 20%; making the `import` line
+above it unnecessary to touch is the other 80%, and isn't designed here
+either - noted so the open point in §6 doesn't undersell what "add a
+shim later" would actually take.
+
+## 1a. Divergences from Zepp — collected
+
+Every deliberate divergence from Zepp introduced by this doc, gathered
+in one place (review round, project chat 2026-09-05) so a later reader
+doesn't have to read §1-§6 in full to find where porting friction comes
+from - each entry links back to its full reasoning:
+
+1. **Factory call, not `new`** (§1 above) - `jw.sensors.Time()`, not
+   `new Time()`; ES5/no-module-loader project constraint. Biggest
+   porting cost of the three - see the `import`-vs-`new` note just
+   above.
+2. **`Vibrator` under `jw.device`, not `jw.sensors`** (§2) - Zepp's own
+   docs nav lists it under Sensor despite it writing; kept separate
+   here because the permission split is more honest, not because Zepp
+   does.
+3. **`Battery.isCharging()` exists at all** (§4's Battery section) -
+   neither Zepp API generation checked exposes a charging-status method;
+   this is a Kaliber addition, not a port of something Zepp has.
+
 ## 2. Manifest field for required modules
 
 Extends the *existing* mechanism (`kb_manifest_t.perm_net/perm_storage/
@@ -148,6 +180,18 @@ return type is a `boolean` (only `isCharging()` so far) also returns
 real answer, indistinguishable from "don't know". `null` is unambiguous
 in both cases and matches what `typeof x === 'number'`/`typeof x ===
 'boolean'` checks in a face's own code would expect to guard against.
+
+**One real sharp edge this creates, worth stating rather than leaving
+implicit** (review round, project chat 2026-09-05): `null` is falsy in
+JS, same as `false` - `if (battery.isCharging())` behaves *identically*
+whether the real answer is "no" or "unknown," so naive code never
+notices the difference it was just given. The rule (`null`, not `false`)
+is still the right one - it's what makes the distinction *possible* to
+make - but only for code that checks for it explicitly
+(`battery.isCharging() === null`), not for code that just uses the
+value in a condition. Worth a one-line callout in any future usage
+example/quickstart this doc's modules get, not a reason to change the
+rule itself.
 
 Every module below states its capability gate explicitly (which
 `board_desc_t.caps` field decides it) - `caps` is what a board can query
