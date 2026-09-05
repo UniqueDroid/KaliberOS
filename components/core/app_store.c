@@ -911,35 +911,147 @@ unsigned kb_store_install_selftest(void) {
          | (tamper_rejected ? KB_STORE_SELFTEST_TAMPER : 0);
 }
 
+/* Minimal USTAR header writer - the write-side counterpart to tar_parse()
+ * above, needed exactly once (kb_store_install_default_face(), below):
+ * everywhere else this firmware only ever reads a package, atelier.py
+ * (Python's real tarfile module) writes them. tar_parse() itself never
+ * checks the checksum field, but a genuinely spec-compliant archive
+ * costs nothing extra here and avoids a surprise if anyone ever
+ * inspects one of these with a real `tar tf`. */
+static void write_tar_header(FILE *f, const char *name, size_t size) {
+    uint8_t hdr[512] = {0};
+    strlcpy((char *)hdr, name, 100);
+    snprintf((char *)hdr + 100, 8, "%07o", 0644);            /* mode */
+    snprintf((char *)hdr + 124, 12, "%011o", (unsigned)size); /* size */
+    snprintf((char *)hdr + 136, 12, "%011o", 0);              /* mtime */
+    memset(hdr + 148, ' ', 8);                                /* chksum: spaces while summing */
+    hdr[156] = '0';                                           /* typeflag: regular file */
+    memcpy(hdr + 257, "ustar", 6);                            /* magic, incl. NUL */
+    hdr[263] = '0'; hdr[264] = '0';                           /* version "00" */
+
+    unsigned sum = 0;
+    for (int i = 0; i < 512; i++) sum += hdr[i];
+    char chksum[8];
+    snprintf(chksum, sizeof chksum, "%06o", sum);
+    memcpy(hdr + 148, chksum, 6);
+    hdr[154] = '\0';
+    hdr[155] = ' ';
+
+    fwrite(hdr, 1, 512, f);
+}
+
+static void write_tar_entry(FILE *f, const char *name, const uint8_t *data, size_t size) {
+    write_tar_header(f, name, size);
+    fwrite(data, 1, size, f);
+    size_t pad = (512 - (size % 512)) % 512;
+    if (pad) {
+        uint8_t zeros[512] = {0};
+        fwrite(zeros, 1, pad, f);
+    }
+}
+
+/* HMAC-SHA256 over seg1 then seg2 (manifest.json bytes, then the sole
+ * bytecode entry - atelier.py's cmd_pack signs "manifest + bytecode
+ * entries sorted by name", trivially just these two with one entry),
+ * hex-encoded into out_hex[65]. Sign-side counterpart to
+ * verify_hmac_segments() above; simpler because both inputs are already
+ * whole buffers in RAM (the embedded arrays below), not a file streamed
+ * in CHUNK_SIZE pieces - nothing here is untrusted network/serial input
+ * the way an incoming install's package is. */
+static bool sign_hmac(const uint8_t *seg1, size_t len1, const uint8_t *seg2, size_t len2,
+                       const uint8_t *key, size_t key_len, char out_hex[65]) {
+    psa_status_t st = psa_crypto_init();
+    if (st != PSA_SUCCESS && st != PSA_ERROR_ALREADY_EXISTS) return false;
+
+    psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attrs, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_HMAC);
+
+    mbedtls_svc_key_id_t key_id;
+    if (psa_import_key(&attrs, key, key_len, &key_id) != PSA_SUCCESS) return false;
+
+    psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
+    bool ok = psa_mac_sign_setup(&op, key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256)) == PSA_SUCCESS;
+    ok = ok && psa_mac_update(&op, seg1, len1) == PSA_SUCCESS;
+    ok = ok && psa_mac_update(&op, seg2, len2) == PSA_SUCCESS;
+
+    uint8_t mac[32];
+    size_t mac_len = 0;
+    if (ok) {
+        ok = psa_mac_sign_finish(&op, mac, sizeof mac, &mac_len) == PSA_SUCCESS;
+        if (!ok) psa_mac_abort(&op);
+    } else {
+        psa_mac_abort(&op);
+    }
+    psa_destroy_key(key_id);
+    if (!ok || mac_len != sizeof mac) return false;
+
+    for (size_t i = 0; i < sizeof mac; i++) snprintf(out_hex + i * 2, 3, "%02x", mac[i]);
+    return true;
+}
+
 /* Default out-of-box face (docs/design/launcher-states.md §4, project
  * chat 2026-09-05: "the watch shows the time after power-on... without
- * anyone installing anything"). Installs the embedded k_default_face_comp
- * (default_face_pkg.h) through this exact same kb_store_install() path
- * any real package uses - no bypass - but only if nothing of type
- * watchface is installed yet, so this never overwrites a real face a
- * user (or §4's still-open real per-device-key signing flow, once that
- * exists) has actually put there. Idempotent, safe to call every boot -
- * same shape as kb_store_install_selftest(), a real install this one
- * either performs once or skips forever after. */
+ * anyone installing anything"). This is §4's actual recommended
+ * mechanism, not the fixed-key shortcut an earlier pass of this function
+ * used (2026-09-05, same day - replaced once the real per-device key was
+ * confirmed working end to end): default_face_pkg.h embeds only the
+ * *unsigned* manifest.json + bytecode; this signs them at runtime with
+ * get_hmac_key()'s real per-device key, assembles a tar container, and
+ * installs it through the exact same kb_store_install() path any real
+ * package uses - no bypass, no fixed key anywhere in the repo.
+ *
+ * Skips if a watchface-type package with a *different* id already
+ * exists (a real user's own face, never overwritten) - but not if it's
+ * "kaliber.default" itself, so a device that already has the old fixed-
+ * key-signed copy (installed before this function was rewritten) still
+ * gets it replaced with a properly-signed one on its next boot, rather
+ * than skipping forever because "a watchface already exists". Cheap and
+ * safe to call unconditionally every boot either way: the embedded
+ * source costs nothing to re-sign, and kb_store_install()'s own rename-
+ * over-existing swap makes reinstalling under the same id a no-op in
+ * effect once the signature already matches. */
 void kb_store_install_default_face(void) {
+    static const char *DEFAULT_FACE_ID = "kaliber.default";
+
     char ids[8][KB_APP_ID_MAX];
     int n = kb_store_list(ids, 8);
     for (int i = 0; i < n; i++) {
         kb_manifest_t mf;
-        if (kb_store_read_manifest(ids[i], &mf) == ESP_OK && mf.type == KB_APP_WATCHFACE) {
+        if (kb_store_read_manifest(ids[i], &mf) == ESP_OK && mf.type == KB_APP_WATCHFACE
+            && strcmp(ids[i], DEFAULT_FACE_ID) != 0) {
             ESP_LOGI(TAG, "default face: skipped, '%s' already covers watchface", ids[i]);
             return;
         }
     }
 
+    uint8_t key[32];
+    if (get_hmac_key(key) != ESP_OK) {
+        ESP_LOGE(TAG, "default face: could not obtain this device's HMAC key");
+        return;
+    }
+
+    char sig_hex[65];
+    if (!sign_hmac(k_default_face_manifest, sizeof k_default_face_manifest,
+                    k_default_face_qjb, sizeof k_default_face_qjb,
+                    key, sizeof key, sig_hex)) {
+        ESP_LOGE(TAG, "default face: HMAC signing failed");
+        return;
+    }
+
     const char *pkg_path = ROOT "/.default_face.comp";
     FILE *pf = fopen(pkg_path, "wb");
-    if (!pf || fwrite(k_default_face_comp, 1, sizeof k_default_face_comp, pf)
-               != sizeof k_default_face_comp) {
-        if (pf) fclose(pf);
+    if (!pf) {
         ESP_LOGE(TAG, "default face: could not stage package");
         return;
     }
+    write_tar_entry(pf, "manifest.json", k_default_face_manifest, sizeof k_default_face_manifest);
+    write_tar_entry(pf, "app.qjb", k_default_face_qjb, sizeof k_default_face_qjb);
+    write_tar_entry(pf, "sig.hmac", (const uint8_t *)sig_hex, 64); /* raw hex, no NUL - matches atelier.py's sig.hmac */
+    uint8_t zeros[512] = {0};
+    fwrite(zeros, 1, sizeof zeros, pf); /* end-of-archive marker, two all-zero blocks per POSIX tar */
+    fwrite(zeros, 1, sizeof zeros, pf);
     fclose(pf);
 
     char id[KB_APP_ID_MAX];
@@ -949,5 +1061,5 @@ void kb_store_install_default_face(void) {
         ESP_LOGE(TAG, "default face: install failed: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "default face: installed '%s'", id);
+    ESP_LOGI(TAG, "default face: installed '%s', signed with this device's own key", id);
 }
