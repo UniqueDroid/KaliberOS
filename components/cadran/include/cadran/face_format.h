@@ -63,9 +63,15 @@ typedef enum {
     CADRAN_WIDGET_LINE       = 7,
 } cadran_widget_type_t;
 
-/* "Always available" providers per design doc §5. steps/hr/stress (caps-
- * gated) and app.0..7 (hybrid-face-writable slots) are reserved ranges,
- * not implemented by cadran_provider_get() yet - see providers.c. */
+/* "Always available" providers per design doc §5, plus the caps-gated
+ * step pair (STEP_COUNT/STEP_TARGET) - hr/stress remain reserved,
+ * not implemented by cadran_provider_get() yet. app.0..7 (hybrid-face-
+ * writable slots) is a separate reserved range - see providers.c.
+ *
+ * STEP_COUNT/STEP_TARGET read board_desc_t.sensors the same way
+ * jw.sensors.Step() does (unruh/modules/js_sensors.c) - js-api.md §4a's
+ * "one source, not two" rule: a provider here must call the identical
+ * sensor_ops_t field the JS module calls, never its own reader. */
 typedef enum {
     CADRAN_PROVIDER_NONE            = 0,
     CADRAN_PROVIDER_TIME_H          = 1,
@@ -77,6 +83,8 @@ typedef enum {
     CADRAN_PROVIDER_DATE_M          = 7,
     CADRAN_PROVIDER_DATE_WD         = 8,
     CADRAN_PROVIDER_BATTERY_PCT     = 9,
+    CADRAN_PROVIDER_STEP_COUNT      = 10,
+    CADRAN_PROVIDER_STEP_TARGET     = 11,
     CADRAN_PROVIDER_APP_0           = 16, /* .. CADRAN_PROVIDER_APP_0 + 7 */
 } cadran_provider_id_t;
 

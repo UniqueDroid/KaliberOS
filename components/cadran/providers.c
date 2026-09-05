@@ -76,6 +76,17 @@ bool cadran_provider_get(cadran_provider_id_t id, const board_desc_t *board,
         out->i32 = pct;
         return true;
     }
+    case CADRAN_PROVIDER_STEP_COUNT:
+        /* Same board_desc_t.sensors field jw.sensors.Step().getCurrent()
+         * reads (unruh/modules/js_sensors.c) - js-api.md §4a's "one
+         * source, not two" rule, not a second reader of the IMU. */
+        if (!board || !board->sensors || !board->sensors->step_count) return false;
+        out->i32 = board->sensors->step_count();
+        return true;
+    case CADRAN_PROVIDER_STEP_TARGET:
+        if (!board || !board->sensors || !board->sensors->step_target) return false;
+        out->i32 = board->sensors->step_target();
+        return true;
     default:
         /* CADRAN_PROVIDER_NONE, unknown ids, and the app.0..7 slots (not
          * writable by anything yet - no hybrid-face JS API exists). */

@@ -105,6 +105,8 @@ static const provider_map_t PROVIDERS[] = {
     {"date.m",          CADRAN_PROVIDER_DATE_M},
     {"date.wd",         CADRAN_PROVIDER_DATE_WD},
     {"battery.pct",     CADRAN_PROVIDER_BATTERY_PCT},
+    {"steps.count",     CADRAN_PROVIDER_STEP_COUNT},
+    {"steps.target",    CADRAN_PROVIDER_STEP_TARGET},
 };
 
 /* "app.0".."app.7" -> CADRAN_PROVIDER_APP_0+N, per design doc §5 - not
