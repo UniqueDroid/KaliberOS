@@ -70,11 +70,12 @@ tools/atelier/atelier.py push de.jan.hello-0.1.0.comp --host <watch-ip> --port 8
 `atelier` is deliberately shaped to slot into an existing `release.sh`
 pipeline (pack → push, exit codes, no interactivity).
 
-`push` needs the watch to actually be listening: plug it into USB - that's
-`net_svc.c`'s sync-mode trigger (see `board_hal`'s `usb_connected()`), no
-button combo or menu yet - and the panel shows a SSID/password/IP screen
-for `KALIBER_NET_SYNC_TIMEOUT_S` (120s default) or until the endpoint
-gets a request, whichever comes first. `--key` must match the device's
+`push` needs the watch to actually be listening: from WATCHFACE, SELECT
+into MENU, then DOWN to open sync mode (`net_svc.c` - on-demand only as
+of 2026-09-05, no longer triggered automatically by USB alone) - the
+panel shows a SSID/password/IP screen for `KALIBER_NET_SYNC_TIMEOUT_S`
+(120s default) or until the endpoint gets a request, whichever comes
+first. `--key` must match the device's
 own HMAC key (`get_hmac_key()` in `app_store.c` - generated into NVS on
 first boot and logged once, or `KALIBER_STORE_HMAC_KEY_OVERRIDE` if
 pre-provisioned).

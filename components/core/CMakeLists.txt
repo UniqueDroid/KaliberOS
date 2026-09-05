@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "event_bus.c" "power_mgr.c" "app_store.c"
+    SRCS "event_bus.c" "power_mgr.c" "app_store.c" "launcher_state.c"
     INCLUDE_DIRS "include"
     REQUIRES board_hal esp_timer mbedtls
     # Managed components register under namespace__name, not the package
