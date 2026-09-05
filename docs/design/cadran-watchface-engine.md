@@ -191,7 +191,20 @@ declarative face with no JS engine involvement at all. Suggested order:
    run build(), serialize, destroy engine) is still only exercised by
    the self-test harness.
 5. atelier resource pipeline (dithering, digit strips)
-6. hybrid mode wiring in the launcher
+6. [x] launcher wiring (`launcher.c`'s `app_boot()`), 2026-09-05 - a
+   package whose bytecode calls `WatchFace({...})` instead of `App({...})`
+   now boots the engine, runs `build()`, serializes, renders through
+   `cadran_render()`, and tears the engine down again, all within one
+   `app_boot()` call. Real gap versus this section's design: **no
+   face.bin caching yet** - every wake re-runs `build()` and reboots the
+   engine, it does not yet skip Unruh entirely on a tick the way §1's
+   core promise describes. Correct behavior, missing optimization; a
+   real face.bin-presence check (build() only on install/ABI mismatch,
+   as designed above) is still open. Also lands the default out-of-box
+   face this step existed to enable (§4 below, `examples/watchfaces/
+   default`) - auto-installed on first boot via
+   `kb_store_install_default_face()` (`app_store.c`), same fixed-key
+   caveat §4 already flags for its own embedded-package approach.
 
 Step 1–3 need no JS at all and can be built against the hello example's
 partition layout — good parallel track while the QuickJS build lands.

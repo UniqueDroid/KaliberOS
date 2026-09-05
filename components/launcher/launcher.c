@@ -45,12 +45,18 @@
 #include "launcher/launcher.h"
 #include "gfx/text.h"
 #include "net_svc/net_svc.h"
+#include "cadran/cadran.h"
 
 static const char *TAG = "launcher";
 
 extern const js_module_def_t jw_ui_module;
 extern void jw_ui_bind_fb(const gfx_ctx_t *ctx);
 extern bool jw_ui_take_dirty(void);
+
+extern const js_module_def_t jw_watchface_module;
+extern bool js_watchface_has_face(void);
+extern void js_watchface_reset(void);
+extern esp_err_t js_watchface_build(const board_desc_t *board, uint8_t **out_buf, size_t *out_len);
 
 /* Same budget js_call_hook() (unruh/engine_quickjs.c) gives a single
  * onRender() - shared here so the launcher's per-stripe render pass
@@ -114,8 +120,13 @@ static bool app_boot(const char *id) {
              (unsigned)esp_get_free_heap_size(), (unsigned)js_mem_used(L.eng));
 
     /* Capability + permission gated module registration: a module the app
-     * may not use simply does not exist in its context. */
+     * may not use simply does not exist in its context. jw_watchface is
+     * always registered alongside jw_ui, not gated - WatchFace({...})
+     * carries no permission implications of its own (unlike net/storage
+     * below), same reasoning as registering it unconditionally in
+     * js_watchface_selftest(). */
     js_register_module(L.eng, &jw_ui_module);
+    js_register_module(L.eng, &jw_watchface_module);
     /* if (L.mf.perm_net)     js_register_module(L.eng, &jw_net_module);   */
     /* if (L.mf.perm_storage) js_register_module(L.eng, &jw_storage_module); */
 
@@ -124,24 +135,77 @@ static bool app_boot(const char *id) {
     js_status_t st = js_load_app(L.eng, bc, bclen);
     free(bc);
     if (st != JS_OK) { app_fail("load"); return false; }
+
     /* js_load_app() itself no longer requires App({...}) - it's shared
-     * with WatchFace() bytecode (js_watchface.c) - so the launcher's own
-     * App()-only contract is checked here instead. */
-    if (!js_has_app(L.eng)) {
-        ESP_LOGE(TAG, "app '%s' never called App({...})", id);
-        return false;
+     * with WatchFace() bytecode (js_watchface.c). Which lifecycle global
+     * the bytecode actually called decides the path from here: an App()
+     * gets the usual resident-engine lifecycle below; a WatchFace() gets
+     * design doc §8's declarative path instead (added 2026-09-05, design
+     * doc roadmap step 6) - build() runs once, right now, the result
+     * renders immediately, and the engine is gone again before this
+     * function returns. Neither ever coexist in one package (atelier
+     * doesn't have a shape for it, and nothing needs it yet). */
+    if (js_has_app(L.eng)) {
+        strlcpy(L.app_id, id, sizeof L.app_id);
+
+        char *state = kb_store_read_state(id);
+        st = state ? js_call_hook(L.eng, JS_HOOK_ON_RESUME, state, NULL)
+                   : js_call_hook(L.eng, JS_HOOK_ON_INIT, NULL, NULL);
+        free(state);
+        if (st != JS_OK) { app_fail("init/resume"); return false; }
+
+        L.app_ok = true;
+        return true;
     }
 
-    strlcpy(L.app_id, id, sizeof L.app_id);
+    if (js_watchface_has_face()) {
+        uint8_t *face_buf = NULL;
+        size_t face_len = 0;
+        esp_err_t err = js_watchface_build(b, &face_buf, &face_len);
+        /* Same ordering js_watchface_selftest() proved out: drop the JS
+         * reference and destroy the engine before touching Cadran at
+         * all - the whole point of the declarative path is that
+         * rendering never needs the engine, not just that it happens to
+         * still work while it's around. */
+        js_watchface_reset();
+        js_destroy(L.eng);
+        L.eng = NULL;
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "watchface '%s': build/serialize failed: %s", id, esp_err_to_name(err));
+            return false;
+        }
 
-    char *state = kb_store_read_state(id);
-    st = state ? js_call_hook(L.eng, JS_HOOK_ON_RESUME, state, NULL)
-               : js_call_hook(L.eng, JS_HOOK_ON_INIT, NULL, NULL);
-    free(state);
-    if (st != JS_OK) { app_fail("init/resume"); return false; }
+        cadran_face_t *face = NULL;
+        err = cadran_face_load(face_buf, face_len, &face);
+        free(face_buf);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "watchface '%s': face.bin invalid: %s", id, esp_err_to_name(err));
+            return false;
+        }
 
-    L.app_ok = true;
-    return true;
+        strlcpy(L.app_id, id, sizeof L.app_id);
+        /* Same per-stripe blit loop as draw_no_apps_screen()/draw_menu_
+         * placeholder() - a declarative face has no onRender/jw.ui dirty
+         * flag of its own, this *is* its render. L.app_ok stays false:
+         * there's no ongoing engine instance for app_render_if_dirty()
+         * or dispatch()'s forward-to-app path to touch, correctly. */
+        uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+        if (b->display->begin_frame) b->display->begin_frame();
+        for (int y = 0; y < b->caps.disp_h; y += stripe) {
+            int h = stripe;
+            if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
+            gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
+            memset(L.fb, 0xFF, board_fb_size());
+            cadran_render(face, &ctx);
+            b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
+        }
+        b->display->end_frame(true);
+        cadran_face_free(face);
+        return true;
+    }
+
+    ESP_LOGE(TAG, "app '%s' never called App({...}) or WatchFace({...})", id);
+    return false;
 }
 
 /* Tears down whatever engine is currently loaded (if any) - shared by

@@ -3,8 +3,10 @@
  * returning, streamed uploads).
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -195,6 +197,54 @@ static const httpd_uri_t install_uri = {
     .uri = "/install", .method = HTTP_POST, .handler = install_post_handler,
 };
 
+/* Sets the RTC-backed system clock from the pushing host's own time
+ * (project chat 2026-09-05: watchy_v3 has no RTC chip and no SNTP client
+ * wired up yet, so nothing else on this device ever sets it - see
+ * cadran/providers.c's time_set check, which is what shows "??:??"
+ * instead of a confidently wrong time until this has run at least once).
+ * No tzset()/setenv("TZ", ...) anywhere in this firmware, deliberately -
+ * the epoch this handler receives is treated as this device's local wall
+ * clock directly, not true UTC (atelier.py's push sends its *local*
+ * broken-down time reinterpreted as UTC for exactly this reason - see
+ * its own comment). Body: a bare decimal timestamp (seconds), no JSON -
+ * this is a plumbing detail for atelier.py's push, not a public API
+ * worth a richer format yet. Coarse (whole seconds, no NTP-grade
+ * accuracy) is fine for a watch face; get the order of magnitude right,
+ * not the millisecond. */
+static esp_err_t time_post_handler(httpd_req_t *req) {
+    touch_activity();
+    char buf[32];
+    int len = req->content_len < (int)sizeof buf - 1 ? req->content_len : (int)sizeof buf - 1;
+    int r = len > 0 ? httpd_req_recv(req, buf, len) : 0;
+    if (r <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    buf[r] = '\0';
+
+    char *end;
+    long epoch = strtol(buf, &end, 10);
+    if (end == buf || epoch <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a positive decimal epoch");
+        return ESP_FAIL;
+    }
+
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    if (settimeofday(&tv, NULL) != 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "settimeofday failed");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "time: set to epoch %ld from push host", epoch);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static const httpd_uri_t time_uri = {
+    .uri = "/time", .method = HTTP_POST, .handler = time_post_handler,
+};
+
 /* ------------------------------------------------------------- run loop */
 
 void kb_net_svc_run_sync_mode(void) {
@@ -271,6 +321,7 @@ void kb_net_svc_run_sync_mode(void) {
     httpd_cfg.server_port = 8080;
     if (httpd_start(&httpd, &httpd_cfg) == ESP_OK) {
         httpd_register_uri_handler(httpd, &install_uri);
+        httpd_register_uri_handler(httpd, &time_uri);
     } else {
         ESP_LOGE(TAG, "sync mode: httpd_start() failed - AP is up but nothing is listening");
     }

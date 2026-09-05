@@ -52,6 +52,7 @@
 #include "core/app_store.h"
 #include "core/event_bus.h"
 #include "store_install_selftest_pkg.h"
+#include "default_face_pkg.h"
 
 static const char *TAG = "store";
 #define ROOT "/apps"
@@ -908,4 +909,45 @@ unsigned kb_store_install_selftest(void) {
          | (mf_ok        ? KB_STORE_SELFTEST_MANIFEST : 0)
          | (bc_ok         ? KB_STORE_SELFTEST_BYTECODE : 0)
          | (tamper_rejected ? KB_STORE_SELFTEST_TAMPER : 0);
+}
+
+/* Default out-of-box face (docs/design/launcher-states.md §4, project
+ * chat 2026-09-05: "the watch shows the time after power-on... without
+ * anyone installing anything"). Installs the embedded k_default_face_comp
+ * (default_face_pkg.h) through this exact same kb_store_install() path
+ * any real package uses - no bypass - but only if nothing of type
+ * watchface is installed yet, so this never overwrites a real face a
+ * user (or §4's still-open real per-device-key signing flow, once that
+ * exists) has actually put there. Idempotent, safe to call every boot -
+ * same shape as kb_store_install_selftest(), a real install this one
+ * either performs once or skips forever after. */
+void kb_store_install_default_face(void) {
+    char ids[8][KB_APP_ID_MAX];
+    int n = kb_store_list(ids, 8);
+    for (int i = 0; i < n; i++) {
+        kb_manifest_t mf;
+        if (kb_store_read_manifest(ids[i], &mf) == ESP_OK && mf.type == KB_APP_WATCHFACE) {
+            ESP_LOGI(TAG, "default face: skipped, '%s' already covers watchface", ids[i]);
+            return;
+        }
+    }
+
+    const char *pkg_path = ROOT "/.default_face.comp";
+    FILE *pf = fopen(pkg_path, "wb");
+    if (!pf || fwrite(k_default_face_comp, 1, sizeof k_default_face_comp, pf)
+               != sizeof k_default_face_comp) {
+        if (pf) fclose(pf);
+        ESP_LOGE(TAG, "default face: could not stage package");
+        return;
+    }
+    fclose(pf);
+
+    char id[KB_APP_ID_MAX];
+    esp_err_t err = kb_store_install(pkg_path, id);
+    unlink(pkg_path);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "default face: install failed: %s", esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "default face: installed '%s'", id);
 }

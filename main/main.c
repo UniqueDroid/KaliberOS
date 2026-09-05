@@ -11,6 +11,8 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_private/esp_clk.h"
+#include "soc/rtc.h"
 #include "nvs_flash.h"
 #include "board_hal/board.h"
 #include "core/event_bus.h"
@@ -23,6 +25,7 @@ static const char *TAG = "kaliber";
 
 extern void js_watchface_selftest(void);
 extern unsigned kb_store_install_selftest(void);
+extern void kb_store_install_default_face(void);
 
 /* js_watchface_selftest() creates a real QuickJS engine (JS_SetMaxStackSize
  * up to caps.js_task_stack - 12k, e.g. ~20k on watchy_v3) - too big for
@@ -46,6 +49,21 @@ void app_main(void) {
     ESP_LOGI(TAG, "Kaliber on %s (engine=%d, psram=%d, deep=%d)",
              b->name, b->caps.engine, b->caps.has_psram,
              b->caps.sleep_model_deep);
+
+    /* RTC clock source verification (project chat 2026-09-05): watchy_v3
+     * has no RTC chip (v1/v1.5/v2 used a DS3231/PCF8563 - see sqfmi's
+     * hardware docs), but does have its own 32.768kHz crystal wired
+     * directly to the S3, which the chip's RTC timer counts against
+     * through deep sleep once CONFIG_RTC_CLK_SRC_EXT_CRYS (sdkconfig) is
+     * actually set - the default is the internal RC oscillator, which
+     * drifts orders of magnitude more and looks fine for the first hour.
+     * Logged once, at the very top of boot: esp_clk_slowclk_cal_get()
+     * returns 0 until the calibration this config change enables has
+     * actually run once, so seeing a real, stable-looking value here is
+     * the confirmation the crystal is oscillating at all, not just that
+     * the Kconfig option is set. */
+    ESP_LOGI(TAG, "RTC slow clock cal: %lu (Q%d.%d us/tick; 0 = not yet calibrated)",
+             (unsigned long)esp_clk_slowclk_cal_get(), 32 - RTC_CLK_CAL_FRACT, RTC_CLK_CAL_FRACT);
 
     ESP_ERROR_CHECK(b->power->init());
     ESP_ERROR_CHECK(b->display->init());
@@ -86,6 +104,15 @@ void app_main(void) {
     ESP_ERROR_CHECK(nvs_err);
 
     ESP_ERROR_CHECK(kb_store_init());
+
+    /* Default out-of-box face (docs/design/launcher-states.md §4, project
+     * chat 2026-09-05) - idempotent, a no-op once any watchface-type
+     * package exists (kb_store_install_default_face()'s own check). Ahead
+     * of the selftest below, not after: if the selftest's own tamper test
+     * ever left something behind despite its cleanup, this still runs
+     * against a known-empty-of-watchfaces store either way, since it
+     * checks by type, not by a specific id. */
+    kb_store_install_default_face();
 
     /* Bring-up only, same rationale as cadran_selftest()/
      * js_watchface_selftest() above. Ran behind a one-shot NVS guard for

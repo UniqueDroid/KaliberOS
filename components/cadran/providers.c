@@ -11,21 +11,48 @@ bool cadran_provider_get(cadran_provider_id_t id, const board_desc_t *board,
     struct tm tmv;
     localtime_r(&now, &tmv);
 
+    /* watchy_v3 has no RTC chip (project chat 2026-09-05) - time() is
+     * newlib's, backed by esp_timer's counter, which starts at the Unix
+     * epoch on power-on and is never set to real wall-clock time by
+     * anything in this tree yet (no SNTP, no manual entry UI). tm_year
+     * is years-since-1900; real synced time is never plausibly before
+     * 2000 (tm_year 100), so this is a cheap, standard embedded-systems
+     * way to tell "never synced" from "actually midnight" without a
+     * dedicated has-been-set flag. time.hm degrades to a visible "??:??"
+     * placeholder rather than a confidently wrong "00:0X" - the design
+     * doc §3 "unavailable provider" rule (widget skipped, not shown at
+     * all) fits a sensor that's genuinely absent, not a clock that's
+     * merely unset yet; a face binding time.hm wants *something* on
+     * screen either way. time.h/time.m and the hand-angle providers
+     * still report unavailable (false) instead - a rotated-to-nonsense
+     * clock hand is worse than no hand, unlike a text placeholder. */
+    bool time_set = tmv.tm_year >= 100;
+
     switch (id) {
     case CADRAN_PROVIDER_TIME_H:
+        if (!time_set) return false;
         out->i32 = tmv.tm_hour;
         return true;
     case CADRAN_PROVIDER_TIME_M:
+        if (!time_set) return false;
         out->i32 = tmv.tm_min;
         return true;
     case CADRAN_PROVIDER_TIME_HM:
         out->is_string = true;
-        snprintf(out->str, sizeof out->str, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+        /* "?" not "-" (found on hardware, 2026-09-05): gfx_font8x8.h's
+         * 0x2d ('-') glyph is all-zero, an intentionally blank cell, not
+         * a missing one - a "--:--" placeholder rendered as just a lone
+         * ":" with nothing either side of it, exactly like real hardware
+         * would; '?' (0x3f) has real glyph data. */
+        if (time_set) snprintf(out->str, sizeof out->str, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+        else          strlcpy(out->str, "??:??", sizeof out->str);
         return true;
     case CADRAN_PROVIDER_TIME_MIN_ANGLE:
+        if (!time_set) return false;
         out->i32 = tmv.tm_min * 6; /* 360deg / 60min, 0deg = 12 o'clock */
         return true;
     case CADRAN_PROVIDER_TIME_HOUR_ANGLE:
+        if (!time_set) return false;
         out->i32 = (tmv.tm_hour % 12) * 30 + tmv.tm_min / 2; /* 360/12, plus minute creep */
         return true;
     case CADRAN_PROVIDER_DATE_D:

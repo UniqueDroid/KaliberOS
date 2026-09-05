@@ -20,6 +20,7 @@ Compilers are located via $QJSC and $MQJSC or PATH. ABI version below must
 match KB_APP_ABI_VERSION in app_store.h — bump both together.
 """
 import argparse
+import calendar
 import hashlib
 import hmac
 import io
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 
 ABI_VERSION = 1
@@ -136,6 +138,33 @@ def cmd_push(args: argparse.Namespace) -> None:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         print(f"push: {resp.status} {resp.read().decode().strip()}")
+
+    # Piggybacks the pushing host's own clock onto every push (project
+    # chat 2026-09-05) - watchy_v3 has no RTC chip and nothing else sets
+    # the device's clock yet (no SNTP), so without this every push would
+    # leave the watch showing "--:--" (cadran/providers.c's time_set
+    # check) even though it's sitting right next to a computer that knows
+    # the time perfectly well. Best-effort: a device that's otherwise
+    # working shouldn't fail the whole push over this alone.
+    #
+    # calendar.timegm(time.localtime()), not time.time(): nothing in this
+    # firmware ever calls tzset()/setenv("TZ", ...), so the device's own
+    # localtime_r() treats whatever epoch it's given as UTC directly -
+    # sending the real UTC epoch would show UTC wall-clock time on the
+    # panel, off by the host's own UTC offset (e.g. 2h for CEST). This
+    # reinterprets the host's local broken-down time *as if* it were UTC,
+    # producing the epoch that makes the device's no-timezone arithmetic
+    # land on the same digits the host's own clock shows - the standard
+    # trick for a device with no timezone database at all.
+    time_url = f"http://{args.host}:{args.port}/time"
+    time_req = urllib.request.Request(
+        time_url, data=str(calendar.timegm(time.localtime())).encode(), method="POST",
+    )
+    try:
+        with urllib.request.urlopen(time_req, timeout=10) as resp:
+            print(f"time: {resp.status} {resp.read().decode().strip()}")
+    except OSError as e:
+        print(f"atelier: warning: could not set device time: {e}", file=sys.stderr)
 
 
 def main() -> None:

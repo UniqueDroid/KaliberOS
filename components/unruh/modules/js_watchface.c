@@ -16,6 +16,7 @@
  */
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -319,11 +320,32 @@ static esp_err_t serialize(JSContext *ctx, JSValueConst tree, const board_desc_t
 
 /* --------------------------------------------------------------- build */
 
+/* True once a loaded app has called the global WatchFace({...}) -
+ * launcher.c's counterpart to js_has_app(), same "which lifecycle global
+ * did this bytecode actually call" check js_load_app()'s own comment
+ * describes, just for the declarative side instead of App(). */
+bool js_watchface_has_face(void) {
+    return JS_IsObject(s_watchface_obj);
+}
+
+/* Drops the held WatchFace({...}) descriptor - same cleanup
+ * js_watchface_selftest() does before js_destroy(), now available to any
+ * caller (the launcher) instead of being inlined there once only. Safe
+ * to call even if WatchFace() was never registered (s_watchface_obj is
+ * JS_UNDEFINED then, JS_FreeValue on it is a no-op). Call before
+ * js_destroy(), not after - s_ctx must still be valid. */
+void js_watchface_reset(void) {
+    if (s_ctx) JS_FreeValue(s_ctx, s_watchface_obj);
+    s_watchface_obj = JS_UNDEFINED;
+}
+
 /* Runs the registered WatchFace({build}).build(ctx) hook and serializes
  * its return value. ctx: {w, h, disp: "eink1"|"rgb565", caps: []} per
  * design doc §3 - caps is always empty for now (steps/hr/stress aren't
- * gated/exposed anywhere yet). */
-static esp_err_t run_build(const board_desc_t *board, uint8_t **out_buf, size_t *out_len) {
+ * gated/exposed anywhere yet). Public (not the selftest's own private
+ * helper anymore, project chat 2026-09-05): the launcher calls this too,
+ * now that step 6 (design doc §8/§9) wires Cadran in for real. */
+esp_err_t js_watchface_build(const board_desc_t *board, uint8_t **out_buf, size_t *out_len) {
     if (!s_ctx || !JS_IsObject(s_watchface_obj)) {
         ESP_LOGE(TAG, "no WatchFace({...}) registered");
         return ESP_ERR_INVALID_STATE;
@@ -394,7 +416,7 @@ void js_watchface_selftest(void) {
 
     uint8_t *face_buf = NULL;
     size_t face_len = 0;
-    esp_err_t err = run_build(b, &face_buf, &face_len);
+    esp_err_t err = js_watchface_build(b, &face_buf, &face_len);
 
     /* Drop the held reference before the context/runtime go away - it's a
      * real DupValue (see js_global_WatchFace), not releasing it left a
@@ -404,8 +426,7 @@ void js_watchface_selftest(void) {
      * whole point of the design is that the tick path never needs it
      * (design doc §1); proving that means not leaning on it a moment
      * longer than build(). */
-    JS_FreeValue(s_ctx, s_watchface_obj);
-    s_watchface_obj = JS_UNDEFINED;
+    js_watchface_reset();
     js_destroy(e);
     s_ctx = NULL;
 

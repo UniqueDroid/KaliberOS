@@ -138,6 +138,21 @@ rather than something this doc needs to solve now.
 
 ## 4. Default face - what a fresh watch shows
 
+**Status (2026-09-05): implemented, but via the fixed-key shortcut this
+section explicitly argues against below, not the resolution it actually
+recommends.** `examples/watchfaces/default` + `kb_store_install_default_
+face()` (`app_store.c`) installs a real Cadran clock face on first boot
+through the unmodified `kb_store_install()` path - but the embedded
+package is signed with `KALIBER_STORE_HMAC_KEY_OVERRIDE`, the same
+fixed test key `store_install_selftest_pkg.h` uses, not a per-device key
+computed at runtime. Correct today because this fleet's current
+sdkconfig has that override set; not yet correct for a real per-device-
+random-key device, which is exactly the gap the "Resolution" paragraph
+below describes closing. That real fix - compute the HMAC at runtime
+with `get_hmac_key()`'s own output, assemble the tar container in C -
+is still open, tracked here rather than done, so it doesn't quietly
+become "already handled" the next time this doc is read.
+
 The constraint from the task: a freshly flashed watch shows the time,
 not nothing - but not via `seed_apps.c`'s pattern (bytecode written
 straight into `/apps/<id>/`, no manifest, bypassing
@@ -193,14 +208,14 @@ using providers that already exist), not a new imperative example.
 The real dependency this creates: Cadran's own design doc already
 specifies how an installed declarative face becomes renderable -
 "after install... the launcher boots the engine once, runs `build()`,
-serializes, stores `face.bin`" (Cadran doc §8) - and that's still
-roadmap step 6, not built yet. **The default-face mechanism in this
-section is blocked on Cadran step 6, not on anything else in this
-document** - the state model (§1), NVS persistence (§2), and the native
-menu (§3) have no such dependency and can be built and verified against
-plain imperative apps (`hello`, still in `examples/complications/`)
-before Cadran step 6 lands. Sequencing: §1-3 first, Cadran step 6
-second, §4 last - not everything in this doc gates on the slowest piece.
+serializes, stores `face.bin`" (Cadran doc §8) - that was roadmap step 6,
+landed 2026-09-05 (see the status note above and Cadran doc §9's roadmap
+table) with one caveat of its own: no `face.bin` caching yet, so every
+wake re-runs `build()` rather than skipping Unruh on a tick the way
+Cadran §1's core promise describes. Sequencing note kept for history:
+§1-3 were built and verified against plain imperative apps (`hello`,
+still in `examples/complications/`) before Cadran step 6 landed, exactly
+as planned here.
 
 ## 5. Where Cadran's hybrid boundary meets this one
 

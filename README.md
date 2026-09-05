@@ -81,13 +81,18 @@ first boot and logged once, or `KALIBER_STORE_HMAC_KEY_OVERRIDE` if
 pre-provisioned).
 
 No package signed with a stray or missing `--key` will install on a real
-device - there is no bundled example that's pre-signed for your specific
-board (that's what `docs/design/launcher-states.md` §4's default-face
-auto-install will eventually provide, once it's unblocked - it's gated
-on Cadran roadmap step 6, not step 4; step 4 itself, the serializer and
-`WatchFace()` API, is already done). A rejected install logged as `HMAC
-verification failed` is the store working correctly, not a bug - re-pack
-with `--key <your device's own key>`.
+device (a rejected install logged as `HMAC verification failed` is the
+store working correctly, not a bug - re-pack with `--key <your device's
+own key>`), but a freshly flashed device does show a default clock face
+out of the box regardless - `docs/design/launcher-states.md` §4's
+auto-install, unblocked 2026-09-05 alongside Cadran roadmap step 6, not
+via `--key` at all (see that section for the fixed-key caveat).
+
+`push` also sets the device's clock (`POST /time`, alongside `/install`)
+- watchy_v3 has no RTC chip and no SNTP client, so without this the
+default face shows a `"??:??"` placeholder (`cadran/providers.c`)
+instead of the time. Best-effort: a failed time-set doesn't fail the
+whole push.
 
 ## Design
 
@@ -118,7 +123,28 @@ Skeleton — architecture is in place, grunt work is flagged:
       task stack), not app_store itself.
 - [x] Sync endpoint (`net_svc.c`): WiFi-on-demand SoftAP + streamed
       `POST /install` - hardware-verified 2026-09-04, real end-to-end
-      `atelier push` against the running watch, no reflash.
+      `atelier push` against the running watch, no reflash. Menu-triggered
+      only as of 2026-09-05 (was: automatic on every wake with USB
+      attached), plus a `POST /time` sibling endpoint atelier's push uses
+      to set the device clock (no RTC chip, no SNTP - see below).
+- [x] **Launcher state machine** (`launcher-states.md` §1-2, WATCHFACE/
+      MENU/APP + NVS persistence) and **Cadran roadmap step 6** (launcher
+      wiring - `WatchFace({...})` packages now boot the engine, `build()`,
+      render, and tear down again through `app_boot()`) both
+      hardware-verified 2026-09-05. Lands the default out-of-box face
+      (`examples/watchfaces/default`, `launcher-states.md` §4) -
+      auto-installed on first boot, no push required, though still via
+      §4's fixed-key shortcut rather than its recommended per-device-key
+      mechanism (flagged there, not done). Real gap: no `face.bin`
+      caching yet, every wake re-runs `build()` (Cadran doc §9).
+- [x] RTC clock source: `CONFIG_RTC_CLK_SRC_EXT_CRYS` (was: internal RC
+      oscillator, drifts orders of magnitude more) - watchy_v3 has no RTC
+      chip but does have its own 32.768kHz crystal, which survives deep
+      sleep once this is set correctly. Calibration value logged once at
+      boot to confirm the crystal is actually oscillating, not just that
+      the option is set. No SNTP client yet - `time.hm` shows a `"??:??"`
+      placeholder (`cadran/providers.c`) until something sets the clock
+      (currently: `atelier push`'s `/time` call above).
 - [ ] MQuickJS backend (`engine_mqjs.c`) → unlocks v2/C6 boards
 - [ ] Second board: `waveshare_c6_amoled` (MQuickJS, RGB565, always-on)
       as a stress test for the HAL - blocked on the

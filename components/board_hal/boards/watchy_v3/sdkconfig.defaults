@@ -6,3 +6,13 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# No RTC chip on v3 (v1 had a DS3231, v1.5/v2 a PCF8563 - see sqfmi's
+# hardware docs), but there is a 32.768kHz crystal wired directly to the
+# S3 (project chat 2026-09-05) - its RTC timer counts against that
+# through deep sleep, but only once this is actually set; the default is
+# the internal RC oscillator, which drifts orders of magnitude more and
+# looks fine for the first hour. main.c logs the calibrated frequency
+# once at boot to confirm the crystal is actually oscillating.
+CONFIG_RTC_CLK_SRC_EXT_CRYS=y
+CONFIG_RTC_CLK_CAL_CYCLES=3000
