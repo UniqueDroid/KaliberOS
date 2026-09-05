@@ -194,19 +194,37 @@ static bool power_usb_connected(void) {
     return false;
 }
 
+/* .charging left unset (NULL): AXP2101 not wired up yet, same reason
+ * .battery_mv/.usb_connected above are still placeholders - see
+ * docs/design/js-api.md §4's Battery section for why this specific
+ * capability is genuinely board-dependent (an I2C PMIC register read
+ * here vs. a GPIO read on watchy_v3), not just unimplemented on both. */
 static const power_ops_t power_ops = {
     .init = power_init, .wake_cause = power_wake_cause,
     .sleep_prepare = power_sleep_prepare, .battery_mv = power_battery_mv,
     .usb_connected = power_usb_connected,
 };
 
+/* --------------------------------------------------------------- sensors */
+
+/* No IMU wired up (QMI8658 driver doesn't exist in this tree yet, a real
+ * gap - see docs/design/js-api.md §4's Step section) - every field
+ * NULL, same honesty as power_ops's missing .charging above. */
+static const sensor_ops_t sensor_ops = { 0 };
+
+/* No vibration motor on this board at all (not in pins.h - Waveshare's
+ * own hardware has none). */
+static const vibrator_ops_t vibrator_ops = { 0 };
+
 /* ------------------------------------------------------------ descriptor */
 
 static const board_desc_t desc = {
-    .name    = "waveshare_c6_amoled",
-    .display = &disp_ops,
-    .input   = &input_ops,
-    .power   = &power_ops,
+    .name     = "waveshare_c6_amoled",
+    .display  = &disp_ops,
+    .input    = &input_ops,
+    .sensors  = &sensor_ops,
+    .vibrator = &vibrator_ops,
+    .power    = &power_ops,
     .caps = {
         /* ESP32-C6, no PSRAM (Waveshare's own sdkconfig.defaults for this
          * board configures no PSRAM options at all; matches display-

@@ -339,19 +339,40 @@ static bool power_usb_connected(void) {
     return gpio_get_level(PIN_USB_DET) != 0;
 }
 
+/* No charge-detect pin in pins.h - watchy_v3 has no PMIC (unlike
+ * waveshare_c6_amoled's AXP2101), so this would need its own GPIO+
+ * circuit beyond the existing PIN_USB_DET (which only says "plugged
+ * in," not "charging" - see js-api.md §4's Battery section on why
+ * those are different facts). Left out of power_ops entirely (no
+ * .charging field set = NULL = capability-unavailable, docs/design/
+ * js-api.md's rule), not stubbed to a function that always returns
+ * false - false would read as a real, confirmed answer. */
 static const power_ops_t power_ops = {
     .init = power_init, .wake_cause = power_wake_cause,
     .sleep_prepare = power_sleep_prepare, .battery_mv = power_battery_mv,
     .usb_connected = power_usb_connected,
 };
 
+/* --------------------------------------------------------------- sensors */
+
+/* No IMU wired up (no BMA423 driver in this tree yet, a real gap - see
+ * docs/design/js-api.md §4's Step section) - every field NULL, same
+ * "not a placeholder, a real TODO" honesty as power_ops's missing
+ * .charging above. */
+static const sensor_ops_t sensor_ops = { 0 };
+
+/* No vibration motor driver GPIO in pins.h. */
+static const vibrator_ops_t vibrator_ops = { 0 };
+
 /* ------------------------------------------------------------ descriptor */
 
 static const board_desc_t desc = {
-    .name    = "watchy_v3",
-    .display = &disp_ops,
-    .input   = &input_ops,
-    .power   = &power_ops,
+    .name     = "watchy_v3",
+    .display  = &disp_ops,
+    .input    = &input_ops,
+    .sensors  = &sensor_ops,
+    .vibrator = &vibrator_ops,
+    .power    = &power_ops,
     .caps = {
         /* ESP32-S3FN8 (per watchy.sqfmi.com/docs/hardware's revision
          * table): 8 MB embedded flash, NO PSRAM. JS world lives in

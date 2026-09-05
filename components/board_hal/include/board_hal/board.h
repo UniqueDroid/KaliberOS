@@ -88,16 +88,62 @@ typedef struct {
      * comment on why: GPIO0/PIN_BTN_UP already burned this project once
      * on exactly that kind of assumption). */
     bool (*usb_connected)(void);
+    /* Optional (may be NULL) - true if the battery is currently charging.
+     * docs/design/js-api.md's Battery.isCharging(): genuinely board-
+     * dependent by construction, not just unimplemented - a GPIO CHRG-pin
+     * read and an AXP2101 I2C register read are two different
+     * implementations of this same function pointer, not two states of
+     * one. NULL here (both boards today) means jw.sensors.Battery()'s
+     * isCharging() reports capability-unavailable (null), same as
+     * battery_mv's own "no ADC wired up yet" gap - not a fake reading. */
+    bool (*charging)(void);
 } power_ops_t;
+
+/* Pull-only, all optional (NULL = "this board can't answer this" -
+ * same convention power_ops_t's usb_connected/charging already use, not
+ * a second signaling mechanism). docs/design/js-api.md §4's Step:
+ * board-specific IMU driver (BMA423 on watchy_v3, QMI8658 on
+ * waveshare_c6_amoled) decides whether these are ever non-NULL: neither
+ * board has one wired up yet (both real gaps, not placeholders -
+ * board.c's own TODOs on each board say so), so both report
+ * capability-unavailable today. A whole board without any sensors
+ * at all (neither exists yet) still provides this struct with every
+ * field NULL, same as power_ops_t already does for usb_connected. */
+typedef struct {
+    /* Current step count / today's step goal. Two separate function
+     * pointers, not one struct return - either can independently not
+     * exist on some future sensor (a pedometer with no configurable
+     * goal, say) without forcing the other's capability along with it. */
+    int32_t (*step_count)(void);
+    int32_t (*step_target)(void);
+} sensor_ops_t;
+
+/* The one write/actuator capability in the first wave (docs/design/
+ * js-api.md §2/§4) - deliberately minimal (start/stop only, no Zepp-
+ * style scene/intensity selection, see that doc's Vibrator section for
+ * why). The *safety* ceiling (max-duration auto-stop, stop-on-engine-
+ * teardown) is NOT this struct's job - it lives in the native module
+ * that calls these (unruh/modules/js_device.c), one layer up, so every
+ * board's start() stays a plain "turn the motor on," not board-specific
+ * timeout logic repeated per board. */
+typedef struct {
+    esp_err_t (*start)(void);
+    esp_err_t (*stop)(void);
+} vibrator_ops_t;
 
 /* ------------------------------------------------------------ description */
 
 typedef struct {
     const char *name;
 
-    const display_ops_t *display;
-    const input_ops_t   *input;
-    const power_ops_t   *power;
+    const display_ops_t  *display;
+    const input_ops_t    *input;
+    const power_ops_t    *power;
+    /* Never NULL (same as display/input/power) - a board with nothing
+     * wired up yet still provides the struct, every field NULL, see
+     * sensor_ops_t's/vibrator_ops_t's own comments. */
+    const sensor_ops_t   *sensors;
+    const vibrator_ops_t *vibrator;
 
     struct {
         bool             has_psram;
