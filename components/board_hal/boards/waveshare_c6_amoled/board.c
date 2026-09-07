@@ -26,11 +26,14 @@
  *
  * Bring-up milestone (project chat 2026-09-05): boot + log, then display
  * with stripe_lines actually nonzero (=32, matching display-regions.md
- * §9's suggestion - 410*32*2 = 26,240 B/stripe), buttons/touch later -
- * this file covers the first two. No physical buttons on this board at
- * all (BSP_CAPS_BUTTONS=0 in Waveshare's own header) - touch (FT3168) and
- * the AXP2101 PMIC (battery/USB-detect) are both real TODOs below, not
- * silently assumed unnecessary.
+ * §9's suggestion - 410*32*2 = 26,240 B/stripe) - this file covers the
+ * first two. Waveshare's own BSP claims BSP_CAPS_BUTTONS=0, but that's
+ * the BSP's own conservatism, not the PCB - two real buttons exist
+ * (pins.h's PIN_BTN_BOOT/PIN_BTN_PWR, confirmed 2026-09-07 via a
+ * separate hardware-verified project on the same exact board). Touch
+ * (FT3168, tap+swipe as of 2026-09-07) and the two buttons are both
+ * wired below; the AXP2101 PMIC (battery/USB-detect) is still a real
+ * TODO, not silently assumed unnecessary.
  */
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -142,15 +145,17 @@ static const display_ops_t disp_ops = {
 
 /* FT3168 touch controller (FT5x06-family protocol, I2C addr 0x38,
  * pins.h) - the only input on this board (no physical buttons,
- * Waveshare's own BSP: BSP_CAPS_BUTTONS 0). First-pass scope only
- * (project chat 2026-09-07, explicit constraint): solve the input
- * bottleneck - detect a tap, post it to the event bus, so MENU/sync-
- * mode become reachable at all. No gestures, no multi-touch, no per-
- * widget hit-testing, no JS event API - that's wave 2 and needs the
- * lifecycle contract this doc doesn't settle (js-api.md §6). What
- * crosses the HAL boundary here is a normalized tap position
- * (event_bus.h's EV_TOUCH_TAP), not register layouts or the controller
- * name - the FT3168-specific bytes below never leave this file.
+ * Waveshare's own BSP: BSP_CAPS_BUTTONS 0). Phase 1.1 scope (project
+ * chat 2026-09-07, explicit constraint, extends the 2026-09-07
+ * tap-only bring-up below): tap plus swipe-with-direction, nothing
+ * finer - no multi-touch, no velocity/path data, no per-widget hit-
+ * testing, no JS event API (that's a later wave, needs the lifecycle
+ * contract js-api.md §6 doesn't settle). What crosses the HAL boundary
+ * is a classified gesture (event_bus.h's EV_TOUCH_TAP /
+ * EV_TOUCH_SWIPE, board_hal/board.h's kb_swipe_dir_t) - not register
+ * layouts, interrupt behavior, or panel resolution. The FT3168-specific
+ * bytes and the classification logic itself (§ touch_task below) never
+ * leave this file.
  *
  * Register map + init sequence verified against Waveshare's own
  * Arduino_FT3x68.cpp/h (github.com/waveshareteam/ESP32-C6-Touch-AMOLED-
@@ -192,11 +197,65 @@ static bool ft3168_read_reg(uint8_t reg, uint8_t *out) {
     return i2c_master_transmit_receive(s_touch_dev, &reg, 1, out, 1, 100) == ESP_OK;
 }
 
+static bool ft3168_read_xy(uint16_t *x, uint16_t *y) {
+    uint8_t xh, xl, yh, yl;
+    if (!ft3168_read_reg(FT3168_REG_X1_H, &xh) || !ft3168_read_reg(FT3168_REG_X1_L, &xl) ||
+        !ft3168_read_reg(FT3168_REG_Y1_H, &yh) || !ft3168_read_reg(FT3168_REG_Y1_L, &yl)) {
+        return false;
+    }
+    *x = (uint16_t)(((xh & 0x0F) << 8) | xl);
+    *y = (uint16_t)(((yh & 0x0F) << 8) | yl);
+    return true;
+}
+
+/* Below this displacement, a touch is a tap: normal finger-down jitter,
+ * not an intentional gesture. Above it, direction is whichever axis
+ * moved further, sign gives up/down or left/right - a 4-way
+ * classification, nothing finer (path curvature, velocity) per Phase
+ * 1.1's own scope.
+ *
+ * Two components, not one (review round, project chat 2026-09-07): a
+ * permille-of-panel-size threshold alone would mean the same *physical*
+ * finger movement counts as a swipe on this board but not on a smaller/
+ * denser one - a finger is the same size everywhere, the panel isn't.
+ * PERMILLE scales with this panel's own dimensions (like the hit-target
+ * rule in smartwatch-system/); ABSOLUTE_PX is a floor under it in real
+ * pixels, sized from this specific panel's own known DPI (410×502 over
+ * a 2.06" diagonal, ~314 DPI - Waveshare's own product name states the
+ * diagonal) so a future, denser board can't derive an unrealistically
+ * small threshold from the percentage alone. Whichever constant binds
+ * on a given board is that board's own business - a lower-DPI board
+ * might have ABSOLUTE_PX never actually be the larger of the two. */
+#define SWIPE_MIN_DISPLACEMENT_PERMILLE 150
+#define SWIPE_MIN_DISPLACEMENT_ABSOLUTE_PX 40
+/* Sampled while a finger stays down, not purely interrupt-driven - the
+ * FT3168's INT line pulses once per touch-down (Waveshare's own driver
+ * comment on this board's own display init: "detected touch = one low
+ * pulse"), not continuously while dragging, so there's nothing to wait
+ * an interrupt for once a gesture starts; only when it ends (finger
+ * lifted, FINGERNUM back to 0) or this safety cap is reached does the
+ * gesture resolve. */
+#define GESTURE_POLL_MS 20
+#define GESTURE_MAX_MS  800
+
+static void post_normalized(event_type_t type, uint16_t x, uint16_t y) {
+    /* Normalized 0..1000 (permille of panel w/h) - event_bus.h's
+     * EV_TOUCH_TAP contract, DISP_W/DISP_H stay inside this file. */
+    uint32_t nx = (uint32_t)x * 1000 / DISP_W;
+    uint32_t ny = (uint32_t)y * 1000 / DISP_H;
+    if (nx > 1000) nx = 1000;
+    if (ny > 1000) ny = 1000;
+    event_t ev = { .type = type, .arg = (nx << 16) | ny };
+    kb_bus_post(&ev);
+}
+
 /* I2C reads aren't ISR-safe (blocking, not IRAM-resident) - the ISR
- * below only wakes this task, which does the actual register reads and
- * posts the bus event. Same split watchy_v3's btn_isr() doesn't need
- * (a button ISR already knows which button, nothing to read), the
- * reason touch can't just be "one more IRAM_ATTR handler". */
+ * below only wakes this task on the initial touch-down, which does the
+ * actual register reads (both the one-shot tap case and, since Phase
+ * 1.1, the poll-while-down loop that classifies a swipe) and posts the
+ * bus event. Same split watchy_v3's btn_isr() doesn't need (a button
+ * ISR already knows which button, nothing to read), the reason touch
+ * can't just be "one more IRAM_ATTR handler". */
 static void touch_task(void *arg) {
     (void)arg;
     for (;;) {
@@ -205,23 +264,37 @@ static void touch_task(void *arg) {
         uint8_t fingers = 0;
         if (!ft3168_read_reg(FT3168_REG_FINGERNUM, &fingers) || fingers == 0) continue;
 
-        uint8_t xh, xl, yh, yl;
-        if (!ft3168_read_reg(FT3168_REG_X1_H, &xh) || !ft3168_read_reg(FT3168_REG_X1_L, &xl) ||
-            !ft3168_read_reg(FT3168_REG_Y1_H, &yh) || !ft3168_read_reg(FT3168_REG_Y1_L, &yl)) {
-            continue;
+        uint16_t x0, y0;
+        if (!ft3168_read_xy(&x0, &y0)) continue;
+        uint16_t x_last = x0, y_last = y0;
+
+        int64_t t_start = esp_timer_get_time();
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(GESTURE_POLL_MS));
+            if (!ft3168_read_reg(FT3168_REG_FINGERNUM, &fingers) || fingers == 0) break; /* lifted */
+            if ((esp_timer_get_time() - t_start) > (int64_t)GESTURE_MAX_MS * 1000) break; /* safety cap */
+            uint16_t x, y;
+            if (!ft3168_read_xy(&x, &y)) break;
+            x_last = x; y_last = y;
         }
-        uint16_t x = (uint16_t)(((xh & 0x0F) << 8) | xl);
-        uint16_t y = (uint16_t)(((yh & 0x0F) << 8) | yl);
 
-        /* Normalized 0..1000 (permille of panel w/h) - event_bus.h's
-         * EV_TOUCH_TAP contract, DISP_W/DISP_H stay inside this file. */
-        uint32_t nx = (uint32_t)x * 1000 / DISP_W;
-        uint32_t ny = (uint32_t)y * 1000 / DISP_H;
-        if (nx > 1000) nx = 1000;
-        if (ny > 1000) ny = 1000;
+        int32_t dx = (int32_t)x_last - (int32_t)x0;
+        int32_t dy = (int32_t)y_last - (int32_t)y0;
+        uint32_t adx = (uint32_t)(dx < 0 ? -dx : dx);
+        uint32_t ady = (uint32_t)(dy < 0 ? -dy : dy);
+        uint16_t shorter = DISP_W < DISP_H ? DISP_W : DISP_H;
+        uint32_t threshold = (uint32_t)shorter * SWIPE_MIN_DISPLACEMENT_PERMILLE / 1000;
+        if (threshold < SWIPE_MIN_DISPLACEMENT_ABSOLUTE_PX) threshold = SWIPE_MIN_DISPLACEMENT_ABSOLUTE_PX;
 
-        event_t ev = { .type = EV_TOUCH_TAP, .arg = (nx << 16) | ny };
-        kb_bus_post(&ev);
+        if (adx < threshold && ady < threshold) {
+            post_normalized(EV_TOUCH_TAP, x0, y0);
+        } else {
+            kb_swipe_dir_t dir = (adx > ady)
+                ? (dx > 0 ? KB_SWIPE_RIGHT : KB_SWIPE_LEFT)
+                : (dy > 0 ? KB_SWIPE_DOWN  : KB_SWIPE_UP);
+            event_t ev = { .type = EV_TOUCH_SWIPE, .arg = (uint32_t)dir };
+            kb_bus_post(&ev);
+        }
     }
 }
 
@@ -232,7 +305,61 @@ static void IRAM_ATTR touch_isr(void *arg) {
     if (hpw) portYIELD_FROM_ISR();
 }
 
+/* Two real physical buttons (pins.h's own comment on the source and the
+ * polarity lesson behind it) - polled, not interrupt-driven, on purpose
+ * (project chat 2026-09-07): a sibling project on the same exact board
+ * hit real trouble with an interrupt-based guess on PIN_BTN_PWR
+ * specifically, polling is the hardware-verified-working choice here,
+ * not a Kaliber preference against interrupts in general (watchy_v3's
+ * buttons stay interrupt-driven, that's correct there). Mapping is a
+ * first default, not yet confirmed with Jan/Simon: BOOT -> KB_BTN_DOWN
+ * (reaches sync mode from MENU, same as it always has - keeps that
+ * reachable now that a full-screen tap no longer does), PWR ->
+ * KB_BTN_BACK (a hardware fallback for leaving MENU, alongside the new
+ * swipe gesture below - not the only way out, matching base-system.md
+ * §3's "always get back out" promise with a second, independent path). */
+static void button_poll_task(void *arg) {
+    (void)arg;
+    bool boot_was_pressed = false, pwr_was_pressed = false;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        bool boot_pressed = gpio_get_level(PIN_BTN_BOOT) == 0; /* active-low */
+        if (boot_pressed && !boot_was_pressed) {
+            event_t ev = { .type = EV_BUTTON, .arg = KB_BTN_DOWN };
+            kb_bus_post(&ev);
+        }
+        boot_was_pressed = boot_pressed;
+
+        bool pwr_pressed = gpio_get_level(PIN_BTN_PWR) == 1; /* active-high */
+        if (pwr_pressed && !pwr_was_pressed) {
+            event_t ev = { .type = EV_BUTTON, .arg = KB_BTN_BACK };
+            kb_bus_post(&ev);
+        }
+        pwr_was_pressed = pwr_pressed;
+    }
+}
+
 static esp_err_t input_init(void) {
+    const gpio_config_t boot_cfg = {
+        .pin_bit_mask = 1ULL << PIN_BTN_BOOT,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&boot_cfg);
+    const gpio_config_t pwr_cfg = {
+        .pin_bit_mask = 1ULL << PIN_BTN_PWR,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&pwr_cfg);
+    xTaskCreate(button_poll_task, "buttons", 2560, NULL, 5, NULL);
+
+
     /* Reset pulse first, before any I2C traffic - see this file's
      * header comment above (finding 1): without it the chip never
      * responds at all. Sequence from Waveshare's own Arduino_FT3x68.cpp:

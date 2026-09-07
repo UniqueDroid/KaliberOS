@@ -40,6 +40,17 @@ typedef enum {
     KB_BTN_MAX,
 } kb_button_t;
 
+/* Swipe direction - the one other gesture a touch board reports
+ * (event_bus.h's EV_TOUCH_SWIPE), alongside a bare tap
+ * (EV_TOUCH_TAP). Board-neutral on purpose (project chat 2026-09-07,
+ * Phase 1.1's explicit constraint): a touch driver classifies its own
+ * raw sample path into one of these four before anything crosses the
+ * HAL boundary - register layout, interrupt behavior, and panel
+ * resolution never leave the board's own board.c. */
+typedef enum {
+    KB_SWIPE_UP, KB_SWIPE_DOWN, KB_SWIPE_LEFT, KB_SWIPE_RIGHT,
+} kb_swipe_dir_t;
+
 /* -------------------------------------------------------------------- ops */
 
 /* Region-based (docs/design/display-regions.md): a board whose panel

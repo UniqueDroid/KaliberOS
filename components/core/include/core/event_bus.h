@@ -28,6 +28,12 @@ typedef enum {
      * real touch UI (js-api.md §6) will need it and re-deriving it from
      * a bare "something happened" signal isn't possible after the fact. */
     EV_TOUCH_TAP,
+    /* arg = kb_swipe_dir_t. A board's touch driver classifies its own
+     * raw sample path (position over time) into this before posting -
+     * see board_hal/board.h's kb_swipe_dir_t comment for why nothing
+     * finer-grained (velocity, path curvature) crosses this boundary:
+     * Phase 1.1's scope is direction only. */
+    EV_TOUCH_SWIPE,
     EV_TICK_MINUTE,
     EV_TIMER,           /* arg = js timer id                                 */
     EV_NET_RESULT,      /* payload = net_result_t*, ownership -> consumer    */

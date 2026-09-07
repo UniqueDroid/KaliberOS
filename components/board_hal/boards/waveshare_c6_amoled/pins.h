@@ -52,3 +52,32 @@
  * actively pulsed (board.c's input_init()), independent of the LCD's
  * own already-completed reset. See docs/design/board-bringup-notes.md. */
 #define PIN_TOUCH_RESET 10
+
+/* Two real physical buttons DO exist on this board - correcting this
+ * file's own older claim above ("BSP_CAPS_BUTTONS is 0 for this
+ * board... no button on this pin at all"), which was true of
+ * Waveshare's own BSP surface but not of the actual PCB: the pins are
+ * wired, the BSP just never exposes them as a generic button API
+ * (GPIO9 doubling as the flash-boot strap is the likely reason a
+ * vendor BSP would stay conservative about claiming it). Source:
+ * ~/Projekte/esp-watchos (Jan's separate project, same exact board
+ * model, ESP32-C6-Touch-AMOLED-2.06), main/main.cpp - a real,
+ * hardware-verified sibling project, not a datasheet guess, and it
+ * documents a hard-won polarity lesson worth repeating here rather
+ * than rediscovering: */
+#define PIN_BTN_BOOT       9  /* active-LOW, pull-up - also the flash-mode
+                                * strap; safe as a plain input once past
+                                * reset, same reasoning watchy_v3's own
+                                * strap-pin button already established. */
+#define PIN_BTN_PWR        18 /* active-HIGH, pull-down. esp-watchos's own
+                                * comment: an initial active-low/pull-up
+                                * guess "fired the menu ~3s after every
+                                * boot and only registered real presses on
+                                * release" - polarity here is a measured
+                                * fact, not a convention to assume from
+                                * the other button. Also polled, not
+                                * interrupt-driven, matching that same
+                                * project's choice - not verified again
+                                * independently here, taken on trust from
+                                * a working reference on identical
+                                * hardware. */

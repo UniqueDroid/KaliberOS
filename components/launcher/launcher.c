@@ -252,24 +252,42 @@ static void teardown_engine_if_running(void) {
  * how net_svc.c's draw_sync_screen() already does its own - the content
  * differs enough (and the loop is short enough) that sharing would cost
  * more in indirection than it saves. */
+/* Native-screen layout, relative to this board's own panel (project
+ * chat 2026-09-07: found live, these screens still assumed watchy_v3's
+ * 200×200 - "stuck top-left" on the C6's 410×502, a hardcoded-pixel bug
+ * of exactly the kind the default/dashboard faces already fixed for
+ * themselves back in the Cadran work). Not the real design system
+ * (smartwatch-system/, Phase 4) - proportional margin/line-spacing
+ * only, same 8x8 bitmap font and scale-based sizing every screen here
+ * already used, just no longer pinned to one board's pixel count. */
+static int screen_margin(const board_desc_t *b) {
+    int m = b->caps.disp_w / 40; /* ~2.5%, smartwatch-system/'s own margin ratio is close (24/390) */
+    return m < 4 ? 4 : m;
+}
+static int screen_headline_y(const board_desc_t *b) {
+    int y = b->caps.disp_h / 12;
+    return y < 10 ? 10 : y;
+}
+static int screen_line_gap(const board_desc_t *b) {
+    int g = b->caps.disp_h / 30;
+    return g < 15 ? 15 : g;
+}
+
 static void draw_no_apps_screen(void) {
     const board_desc_t *b = board_get();
     ESP_LOGW(TAG, "no complications installed");
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, 10, 80, "NO APPS", 3);
-        /* Scale 2 (16px/glyph): "atelier push" is 12 chars, 192px - the
-         * widest a detail line gets on this 200px panel before clipping
-         * (docs/design/native-screens.md's hierarchy rule); x=4 not the
-         * usual 10 to keep that margin. Full instructions belong in the
-         * README, not squeezed onto the panel - this is a pointer, not
-         * a manual. */
-        gfx_draw_text(&ctx, 4, 110, "atelier push", 2);
+        gfx_draw_text(&ctx, margin, y0, "NO APPS", 3);
+        /* Full instructions belong in the README, not squeezed onto the
+         * panel - this is a pointer, not a manual. */
+        gfx_draw_text(&ctx, margin, y0 + gap * 3, "atelier push", 2);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -284,16 +302,17 @@ static void draw_no_apps_screen(void) {
 static void draw_menu_placeholder(void) {
     const board_desc_t *b = board_get();
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, 10, 70, "MENU", 3);
-        gfx_draw_text(&ctx, 10, 110, "SELECT: open", 1);
-        gfx_draw_text(&ctx, 10, 125, "BACK:   watchface", 1);
-        gfx_draw_text(&ctx, 10, 140, "DOWN:   install", 1);
+        gfx_draw_text(&ctx, margin, y0, "MENU", 3);
+        gfx_draw_text(&ctx, margin, y0 + gap * 3, "SELECT: open", 1);
+        gfx_draw_text(&ctx, margin, y0 + gap * 4, "BACK:   watchface", 1);
+        gfx_draw_text(&ctx, margin, y0 + gap * 5, "DOWN:   install", 1);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -320,14 +339,15 @@ static void draw_wake_check_screen(const char *msg) {
     const board_desc_t *b = board_get();
     ESP_LOGI(TAG, "wake-check: %s", msg);
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, 10, 80, "WAKE CHECK", 2);
-        gfx_draw_text(&ctx, 10, 110, msg, 1);
+        gfx_draw_text(&ctx, margin, y0, "WAKE CHECK", 2);
+        gfx_draw_text(&ctx, margin, y0 + gap * 2, msg, 1);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -487,20 +507,34 @@ static void dispatch(const event_t *ev, const char *src) {
              ev->type, (unsigned long)ev->arg, src, L.state);
     char json[128];
     switch (ev->type) {
-    /* Touch bring-up (project chat 2026-09-07): solve the input
-     * bottleneck only - a board with no physical buttons (waveshare_
-     * c6_amoled) still needs to reach MENU and sync mode. No hit-
-     * testing yet (x/y in ev->arg are carried but deliberately unused
-     * here - js-api.md §6, wave 2's real touch UI is what needs them),
-     * a tap just synthesizes whichever button reaches the same state
-     * a button-driven board would use for "the one thing to do here" -
-     * re-dispatched as EV_BUTTON so this stays the ONLY place the
-     * WATCHFACE/MENU/APP state machine (§1) is implemented, not a
-     * second copy of it for touch. */
-    case EV_TOUCH_TAP: {
-        kb_button_t synth = (L.state == KB_LSTATE_MENU) ? KB_BTN_DOWN : KB_BTN_SELECT;
-        event_t synth_ev = { .type = EV_BUTTON, .arg = synth };
-        dispatch(&synth_ev, "touch-tap");
+    /* Touch bring-up, revised (project chat 2026-09-07): the original
+     * tap-anywhere-on-the-screen interaction (any first pass, tap
+     * synthesizes SELECT/DOWN) is gone - explicit user feedback: "da
+     * liegt ein Zifferblatt, kein Knopf" (that's a watchface, not a
+     * button). EV_TOUCH_TAP is still classified and posted by the HAL
+     * (board.c) - a real gesture, kept for whenever per-widget hit-
+     * testing exists (wave 2, js-api.md §6) - just not consumed for
+     * navigation here anymore. Falls through to the default case below
+     * (logged by the ESP_LOGI above, otherwise a no-op) like any other
+     * event type nothing currently handles.
+     *
+     * Swipe right is the real interaction (design template, project
+     * chat 2026-09-07 - Android back-gesture conventions explicitly
+     * don't apply, the mockup does): the SAME gesture both opens and
+     * closes the menu - a toggle, not two opposite directions. Reuses
+     * the identical synth-then-redispatch pattern the old tap code did,
+     * for the same reason (one state machine, not a second copy for
+     * touch): SELECT in WATCHFACE opens it, BACK anywhere else closes
+     * it - both already exactly what a physical-button board's SELECT/
+     * BACK already do. UP/DOWN/LEFT are classified and logged but
+     * deliberately not wired to anything yet - Phase 2's real menu
+     * (scrolling, etc.) decides their meaning, not guessed at here. */
+    case EV_TOUCH_SWIPE: {
+        if ((kb_swipe_dir_t)ev->arg == KB_SWIPE_RIGHT) {
+            kb_button_t synth = (L.state == KB_LSTATE_WATCHFACE) ? KB_BTN_SELECT : KB_BTN_BACK;
+            event_t synth_ev = { .type = EV_BUTTON, .arg = synth };
+            dispatch(&synth_ev, "touch-swipe");
+        }
         return;
     }
     case EV_BUTTON:
