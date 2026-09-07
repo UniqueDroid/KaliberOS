@@ -84,7 +84,7 @@ static bool ap_password(char out[65]) {
  * "C path" idea as cadran_selftest(). Heap-allocated (board_fb_size() is
  * a few KB, well past what belongs on any task stack in this project -
  * see README's "big buffers on the heap" convention). */
-static void draw_sync_screen(const char *ssid, const char *pass, const char *ip) {
+static void draw_sync_screen(const char *ssid, const char *pass, const char *ip, const char *key) {
     const board_desc_t *b = board_get();
     uint8_t *fb = malloc(board_fb_size());
     if (!fb) return;
@@ -119,6 +119,19 @@ static void draw_sync_screen(const char *ssid, const char *pass, const char *ip)
         gfx_draw_text(&ctx, 10, 75, line, 1);
         snprintf(line, sizeof line, "IP:   %s:8080", ip);
         gfx_draw_text(&ctx, 10, 90, line, 1);
+        /* docs/design/package-signing.md's pairing flow: this key is
+         * "atelier push --key ..." for a device atelier hasn't seen
+         * before - the regular way to learn one, not a debug value.
+         * 64 hex chars doesn't fit one line even at scale 1 on the
+         * smaller (200px) panel - wrapped 16 chars/line (128px), 4
+         * lines, same width budget every other line here already
+         * respects. */
+        char keybuf[65];
+        strlcpy(keybuf, key, sizeof keybuf);
+        for (int ki = 0; ki < 4; ki++) {
+            snprintf(line, sizeof line, "%s%.16s", ki == 0 ? "KEY:  " : "      ", keybuf + ki * 16);
+            gfx_draw_text(&ctx, 10, 105 + ki * 15, line, 1);
+        }
 
         b->display->blit_region(0, y, b->caps.disp_w, h, fb);
     }
@@ -298,10 +311,13 @@ void kb_net_svc_run_sync_mode(void) {
     char ip_str[16];
     snprintf(ip_str, sizeof ip_str, IPSTR, IP2STR(&ip_info.ip));
 
+    char key_hex[65] = "(unavailable)";
+    kb_store_get_hmac_key_hex(key_hex);
+
     unsigned heap_ap_up = (unsigned)esp_get_free_heap_size();
     ESP_LOGI(TAG, "sync mode: AP '%s' up, pass=%s, ip=%s, free heap %u B",
              ssid, pass, ip_str, heap_ap_up);
-    draw_sync_screen(ssid, pass, ip_str);
+    draw_sync_screen(ssid, pass, ip_str, key_hex);
 
     httpd_handle_t httpd = NULL;
     httpd_config_t httpd_cfg = HTTPD_DEFAULT_CONFIG();

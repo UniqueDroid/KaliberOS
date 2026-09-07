@@ -7,14 +7,26 @@ package and optionally pushes it to a device running the Kaliber sync
 endpoint. Designed to slot into an existing release.sh pipeline.
 
 Usage:
-    atelier.py pack  <appdir> [-o out.comp] [--key hexkey]
-    atelier.py push  <pkg.comp> --host watchy.local [--port 8080]
+    atelier.py pack  <appdir> [-o out.comp]
+    atelier.py push  <pkg.comp> --host watchy.local [--port 8080] --key hexkey
 
 Package format (tar, no compression — LittleFS-friendly):
     manifest.json
     app.qjb          QuickJS bytecode   (if qjsc available / requested)
     app.mqb          MQuickJS bytecode  (if mqjs compiler available)
-    sig.hmac         hex HMAC-SHA256 over manifest.json + bytecode files
+    sig              "<scheme>:<key-id>:<hex-signature>", added by `push`
+
+`pack` never signs (docs/design/package-signing.md): a .comp it produces
+is a plain, unsigned, freely distributable artifact - the same file
+works for any target device. Signing happens at `push` time, over
+*this* device's key, which is what actually decides "may this be
+installed here" (a device-key HMAC answers only that question, not
+"who built this package" - see the design doc for why that distinction
+matters and what a real provenance check would need instead). --key is
+read off the target device's own sync screen (docs/design/
+package-signing.md's pairing flow) - the same key `push`'s own /install
+call already implicitly trusted before this split, just made explicit
+now instead of baked into the package ahead of time.
 
 Compilers are located via $QJSC and $MQJSC or PATH. ABI version below must
 match KB_APP_ABI_VERSION in app_store.h — bump both together.
@@ -111,26 +123,54 @@ def cmd_pack(args: argparse.Namespace) -> None:
         mpath = os.path.join(tmp, "manifest.json")
         json.dump(mf, open(mpath, "w"), indent=2)
 
-        payload = open(mpath, "rb").read()
-        for e in sorted(entries.values()):
-            payload += open(os.path.join(tmp, e), "rb").read()
-        if args.key:
-            sig = hmac.new(bytes.fromhex(args.key), payload,
-                           hashlib.sha256).hexdigest()
-            open(os.path.join(tmp, "sig.hmac"), "w").write(sig)
-
         with tarfile.open(out, "w") as tar:
-            for name in ["manifest.json", *sorted(entries.values())] + (
-                ["sig.hmac"] if args.key else []
-            ):
+            for name in ["manifest.json", *sorted(entries.values())]:
                 tar.add(os.path.join(tmp, name), arcname=name)
 
     engines = "+".join(sorted(entries))
-    print(f"packed {out} ({engines}, abi {ABI_VERSION})")
+    print(f"packed {out} ({engines}, abi {ABI_VERSION}) - unsigned, sign at push time")
+
+
+def sign_package(package_path: str, key_hex: str) -> bytes:
+    """Reads an unsigned .comp, signs manifest.json + bytecode entries
+    (sorted by name, same order install_impl() on the device verifies
+    in) with the given device key, and returns a new tar's bytes with a
+    "sig" entry appended - the actual push-time signing step
+    docs/design/package-signing.md moved here from `pack`. Rejects (does
+    not silently re-sign) a package that already has a `sig` entry -
+    that would mean pushing something someone else already signed for a
+    *different* device, almost certainly not what was intended."""
+    key = bytes.fromhex(key_hex)
+    with tarfile.open(package_path, "r") as tar:
+        names = tar.getnames()
+        if "sig" in names:
+            die(f"{package_path} is already signed - pack produces unsigned "
+                f".comp files, sign exactly once, at push time, per device")
+        if "manifest.json" not in names:
+            die(f"{package_path}: no manifest.json - not a valid .comp")
+        entries = {n: tar.extractfile(n).read() for n in names}
+
+    payload = entries["manifest.json"]
+    bytecode_names = sorted(n for n in entries if n != "manifest.json")
+    for n in bytecode_names:
+        payload += entries[n]
+    sig_hex = hmac.new(key, payload, hashlib.sha256).hexdigest()
+    sig_field = f"hmac-sha256:default:{sig_hex}".encode()
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name in ["manifest.json", *bytecode_names]:
+            info = tarfile.TarInfo(name)
+            info.size = len(entries[name])
+            tar.addfile(info, io.BytesIO(entries[name]))
+        info = tarfile.TarInfo("sig")
+        info.size = len(sig_field)
+        tar.addfile(info, io.BytesIO(sig_field))
+    return buf.getvalue()
 
 
 def cmd_push(args: argparse.Namespace) -> None:
-    data = open(args.package, "rb").read()
+    data = sign_package(args.package, args.key)
     url = f"http://{args.host}:{args.port}/install"
     req = urllib.request.Request(
         url, data=data, method="POST",
@@ -171,16 +211,17 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="atelier")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pk = sub.add_parser("pack", help="build a .comp package")
+    pk = sub.add_parser("pack", help="build an unsigned .comp package")
     pk.add_argument("appdir")
     pk.add_argument("-o", "--output")
-    pk.add_argument("--key", help="hex HMAC key (matches firmware)")
     pk.set_defaults(func=cmd_pack)
 
-    ps = sub.add_parser("push", help="upload to device sync endpoint")
+    ps = sub.add_parser("push", help="sign for the target device and upload")
     ps.add_argument("package")
     ps.add_argument("--host", required=True)
     ps.add_argument("--port", type=int, default=8080)
+    ps.add_argument("--key", required=True,
+                     help="hex device key, read off the target's sync screen")
     ps.set_defaults(func=cmd_push)
 
     args = p.parse_args()

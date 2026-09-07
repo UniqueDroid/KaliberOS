@@ -1,16 +1,33 @@
 /**
  * Complication store — LittleFS at /apps.
  *
- * .comp package format (see tools/atelier/atelier.py): plain uncompressed
- * USTAR tar, flat (no subdirectories) - manifest.json, app.qjb and/or
- * app.mqb, sig.hmac (hex HMAC-SHA256 over manifest.json + the bytecode
- * entries, sorted by name - exactly atelier's signing order). Unsigned
+ * .comp package format (see tools/atelier/atelier.py, docs/design/
+ * package-signing.md): plain uncompressed USTAR tar, flat (no
+ * subdirectories) - manifest.json, app.qjb and/or app.mqb, sig
+ * ("<scheme>:<key-id>:<hex-signature>" - today always
+ * "hmac-sha256:default:<64 hex chars>" over manifest.json + the
+ * bytecode entries sorted by name, install_impl() dispatches on
+ * `scheme` rather than assuming HMAC, room for an asymmetric provenance
+ * scheme later without another package-format break). Unsigned
  * packages are rejected outright: an unverified package is code
  * execution with full privileges. Verification happens before any of
  * the package's *content* is trusted (JSON-parsed, used to build a
  * path, written to flash) - the low-level tar scan below still has to
  * run first to even find the byte ranges to hash, but it only measures
  * structure, it doesn't act on anything it finds.
+ *
+ * `atelier pack` never signs - a .comp it produces is unsigned and
+ * freely distributable, the same file works for any target device.
+ * Signing happens at `atelier push` time, over the *target* device's
+ * own key (typed in from that device's sync screen) - HMAC is
+ * symmetric, so it can only ever answer "may this be installed on THIS
+ * device," never "who built this package"; baking a key into the
+ * package itself (this project's original design, changed 2026-09-07)
+ * meant a published package could only ever be installed by whoever
+ * held the signer's key, defeating distribution entirely. Package
+ * provenance (proving authorship, not just device permission) is a
+ * different, harder problem - flagged as a real gap in docs/design/
+ * package-signing.md, not designed here.
  *
  * HMAC key: per-device, generated on first boot and stored in NVS (see
  * get_hmac_key()) - never a fixed value baked into the firmware image.
@@ -194,7 +211,15 @@ static esp_err_t get_hmac_key(uint8_t key[32]) {
 
     char hex[65];
     for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", key[i]);
-    ESP_LOGW(TAG, "generated new app-store HMAC key - for 'atelier.py pack --key ...': %s", hex);
+    ESP_LOGW(TAG, "generated new app-store HMAC key - for 'atelier push --key ...': %s", hex);
+    return ESP_OK;
+}
+
+esp_err_t kb_store_get_hmac_key_hex(char out[65]) {
+    uint8_t key[32];
+    esp_err_t err = get_hmac_key(key);
+    if (err != ESP_OK) return err;
+    for (int i = 0; i < 32; i++) snprintf(out + i * 2, 3, "%02x", key[i]);
     return ESP_OK;
 }
 
@@ -407,14 +432,14 @@ static esp_err_t install_impl(const char *pkg_path, char out_id[KB_APP_ID_MAX],
     }
 
     const tar_entry_t *mf_entry = tar_find(entries, n, "manifest.json");
-    const tar_entry_t *sig_entry = tar_find(entries, n, "sig.hmac");
+    const tar_entry_t *sig_entry = tar_find(entries, n, "sig");
     if (!mf_entry) {
         ESP_LOGE(TAG, "install: no manifest.json in package");
         fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
     if (!sig_entry) {
-        ESP_LOGE(TAG, "install: no sig.hmac in package - unsigned packages are rejected");
+        ESP_LOGE(TAG, "install: no sig in package - unsigned packages are rejected");
         fclose(f);
         return ESP_ERR_INVALID_ARG;
     }
@@ -437,14 +462,47 @@ static esp_err_t install_impl(const char *pkg_path, char out_id[KB_APP_ID_MAX],
     segs[0] = (buf_seg_t){ mf_entry->offset, mf_entry->size };
     for (int i = 0; i < n_others; i++) segs[i + 1] = (buf_seg_t){ others[i].offset, others[i].size };
 
-    char sig_hex[65];
-    size_t sig_len = sig_entry->size < sizeof sig_hex - 1 ? sig_entry->size : sizeof sig_hex - 1;
-    if (fseek(f, (long)sig_entry->offset, SEEK_SET) != 0 || fread(sig_hex, 1, sig_len, f) != sig_len) {
-        ESP_LOGE(TAG, "install: could not read sig.hmac");
+    /* Format: "<scheme>:<key-id>:<hex-signature>" - forward-compatible
+     * on purpose (docs/design/package-signing.md): today only
+     * "hmac-sha256:default:<64 hex chars>" exists, but install_impl()
+     * dispatches on `scheme` rather than assuming HMAC, so a future
+     * asymmetric scheme (Ed25519 provenance, same doc) slots in as a
+     * second branch without another package-format break. key-id is
+     * unused for HMAC (a device has exactly one key) but read and
+     * checked anyway - a scheme wired for multiple trusted keys later
+     * needs the field to already exist in every package out there. */
+    char sig_field[128];
+    size_t sig_field_len = sig_entry->size < sizeof sig_field - 1
+        ? sig_entry->size : sizeof sig_field - 1;
+    if (fseek(f, (long)sig_entry->offset, SEEK_SET) != 0 ||
+        fread(sig_field, 1, sig_field_len, f) != sig_field_len) {
+        ESP_LOGE(TAG, "install: could not read sig");
         fclose(f);
         return ESP_FAIL;
     }
-    sig_hex[sig_len] = '\0';
+    sig_field[sig_field_len] = '\0';
+
+    char *scheme = sig_field;
+    char *keyid = strchr(scheme, ':');
+    char *sig_hex = keyid ? strchr(keyid + 1, ':') : NULL;
+    if (!keyid || !sig_hex) {
+        ESP_LOGE(TAG, "install: malformed sig field (want scheme:keyid:hex)");
+        fclose(f);
+        return ESP_ERR_INVALID_ARG;
+    }
+    *keyid++ = '\0';
+    *sig_hex++ = '\0';
+
+    if (strcmp(scheme, "hmac-sha256") != 0) {
+        ESP_LOGE(TAG, "install: unsupported signature scheme '%s'", scheme);
+        fclose(f);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (strcmp(keyid, "default") != 0) {
+        ESP_LOGE(TAG, "install: unknown hmac-sha256 key-id '%s'", keyid);
+        fclose(f);
+        return ESP_ERR_INVALID_ARG;
+    }
 
     uint8_t key[32];
     if (get_hmac_key(key) != ESP_OK) {
@@ -452,7 +510,7 @@ static esp_err_t install_impl(const char *pkg_path, char out_id[KB_APP_ID_MAX],
         fclose(f);
         return ESP_FAIL;
     }
-    if (!verify_hmac_segments(f, segs, n_others + 1, key, sizeof key, sig_hex, sig_len)) {
+    if (!verify_hmac_segments(f, segs, n_others + 1, key, sizeof key, sig_hex, strlen(sig_hex))) {
         ESP_LOGE(TAG, "install: HMAC verification failed - rejecting package");
         fclose(f);
         return ESP_ERR_INVALID_ARG;
@@ -1040,6 +1098,16 @@ void kb_store_install_default_face(void) {
         ESP_LOGE(TAG, "default face: HMAC signing failed");
         return;
     }
+    /* "scheme:key-id:hex" - matches install_impl()'s parser and
+     * atelier.py push's own wire format (docs/design/
+     * package-signing.md). This is the one path that still signs
+     * locally instead of going through atelier - the default face is
+     * embedded unsigned in the firmware image (k_default_face_manifest/
+     * _qjb below) and only ever gets signed here, at first boot, with
+     * this exact device's own key - never atelier's job for this one
+     * package, there being no separate "device" to push to. */
+    char sig_field[128];
+    snprintf(sig_field, sizeof sig_field, "hmac-sha256:default:%s", sig_hex);
 
     const char *pkg_path = ROOT "/.default_face.comp";
     FILE *pf = fopen(pkg_path, "wb");
@@ -1049,7 +1117,7 @@ void kb_store_install_default_face(void) {
     }
     write_tar_entry(pf, "manifest.json", k_default_face_manifest, sizeof k_default_face_manifest);
     write_tar_entry(pf, "app.qjb", k_default_face_qjb, sizeof k_default_face_qjb);
-    write_tar_entry(pf, "sig.hmac", (const uint8_t *)sig_hex, 64); /* raw hex, no NUL - matches atelier.py's sig.hmac */
+    write_tar_entry(pf, "sig", (const uint8_t *)sig_field, strlen(sig_field));
     uint8_t zeros[512] = {0};
     fwrite(zeros, 1, sizeof zeros, pf); /* end-of-archive marker, two all-zero blocks per POSIX tar */
     fwrite(zeros, 1, sizeof zeros, pf);

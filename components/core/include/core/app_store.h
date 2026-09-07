@@ -48,6 +48,15 @@ typedef struct {
 
 esp_err_t kb_store_init(void);
 
+/* This device's own app-store HMAC key, as 64 lowercase hex chars +
+ * NUL (out must be char[65]) - reads the existing NVS key or generates
+ * one, same as every internal caller of get_hmac_key(), just exposed
+ * publicly. docs/design/package-signing.md's pairing flow: net_svc.c's
+ * sync screen shows this alongside SSID/pass/IP so `atelier push --key`
+ * can be typed in directly, no serial console needed - "the regular
+ * way atelier learns a new device," not a debug-only escape hatch. */
+esp_err_t kb_store_get_hmac_key_hex(char out[65]);
+
 /* Install a .comp package already staged as a file (e.g. net_svc.c
  * streams an HTTP upload straight to one). Path, not a memory buffer -
  * a package can run to hundreds of KB once it carries real bytecode plus
