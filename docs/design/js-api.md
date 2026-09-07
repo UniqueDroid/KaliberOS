@@ -145,6 +145,76 @@ needed, not a new mechanism:
 }
 ```
 
+## 2a. Capability declarations - resolved at install, not at runtime
+
+**Decision** (project chat 2026-09-07): hardware compatibility gets
+checked once, at install time, not discovered piecemeal at runtime by
+every `null` check a face happens to write. The manifest gets a second
+field, alongside `"permissions"`:
+
+```json
+{
+  "id": "de.jan.hello",
+  "permissions": ["sensors"],
+  "capabilities": { "required": ["sensors.step"], "optional": [] }
+}
+```
+
+- **`required`** - `install_impl()` (`app_store.c`) checks each name
+  against this board's actual `board_desc_t` function pointers and
+  **rejects the install outright**, with a readable error, if any is
+  missing. A face that hard-depends on a step sensor never lands on a
+  board without one at all - not "installed, then shows nothing," not
+  installed and failing later. Its own JS can then treat that
+  capability as guaranteed present, no `null` check needed for it -
+  the manifest already did that work once, before any of the app's
+  code ever ran.
+- **`optional`** - may be absent on the installing board. A face
+  declaring a capability here is saying "I use it if it's there, and I
+  handle it not being there" - §3's `null` rule below is exactly the
+  mechanism for that handling, unchanged. (Reading a capability that's
+  in neither list isn't itself flagged as an error today - nothing
+  walks a face's/app's code to check that against its own manifest -
+  just something outside what the manifest promised, worth remembering
+  rather than relying on.)
+
+Capability identifiers mirror `board_hal`'s own NULL-checkable
+granularity (`board.h`'s convention: one function pointer, one
+capability), not the module boundary - `sensors.step` covers both
+`Step.getCurrent()`/`getTarget()` (one physical sensor,
+`sensor_ops_t.step_count`/`step_target`), while `sensors.battery` and
+`sensors.charging` stay two separate capabilities because §4's Battery
+section already established they're two different, independently
+answerable facts on real hardware (`power_ops_t.battery_mv` vs.
+`.charging`). `device.vibrator` covers `vibrator_ops_t.start`/`stop`.
+Time has no capability entry - §4 already establishes it as always
+capable (no hardware dependency, nothing to declare).
+
+**What `null` still means, now that install-time already ruled out
+"this board can never do this" for anything declared:** §3's rule
+doesn't change, but it now names a narrower thing than it used to.
+Before this section existed, `null` had to cover two different
+failures at once - "this board lacks the capability" and "the
+capability exists but has no value right now" - because nothing else
+distinguished them. Now the manifest answers the first question, at
+install time, for anything a face bothered to declare; `null` at
+runtime means the second one specifically - a transient state (not yet
+calibrated, a read error), not a compatibility fact. Worth stating
+explicitly, the same way §1a collects this doc's Zepp divergences in
+one place, so the two meanings don't quietly blur back together later.
+
+No `jw.sensors`-side "does a step sensor exist" query is added for
+this - the manifest already answers that, before any JS runs. Whether
+the *optional* case still needs a JS-visible presence check (a face
+wanting to branch on presence to change its own layout, not just
+tolerate `null` values it already handles per-call) is flagged as an
+open point (§6), not designed further here.
+
+Modeled directly on Zepp OS's own device-class system (project chat
+2026-09-07's framing): a face built for a round 466px display is never
+even offered for install on a square-panel watch - resolved before
+install, not a runtime check either.
+
 ## 3. Permission vs capability - two different failures
 
 Two questions that sound similar and are not (project chat 2026-09-05):
