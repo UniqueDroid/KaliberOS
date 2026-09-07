@@ -153,6 +153,18 @@ the earlier fixed-key-signed copy got it silently replaced with a
 properly-signed one on its next boot (the "already installed" guard
 only skips for a package with a *different* id).
 
+**A real implication of that guard, worth stating rather than leaving
+implicit** (found live 2026-09-07 pushing the js-api.md acceptance-test
+face for a look): the guard skips on *any* watchface-type package with
+a different id, not just a recognized "real" one - a single test face
+installed alongside `kaliber.default` permanently turns off this
+self-healing for as long as it stays installed, since there's no
+uninstall mechanism yet to remove it again. Fine for a deliberate test
+(the point, that once); worth a second look once uninstall exists,
+because a corrupted `kaliber.default` sitting next to an unrelated
+installed face today repairs itself never, not just once - not changed
+here, just flagged.
+
 The constraint from the task: a freshly flashed watch shows the time,
 not nothing - but not via `seed_apps.c`'s pattern (bytecode written
 straight into `/apps/<id>/`, no manifest, bypassing
