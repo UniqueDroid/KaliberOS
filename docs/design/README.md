@@ -2,6 +2,7 @@
 
 Concept and architecture documents that aren't implemented yet, kept here for reference while the corresponding roadmap items land.
 
+- [`base-decision.md`](base-decision.md) — LVGL into KaliberOS, or KaliberOS into esp-watchos? A comparison of the two codebases and a recommendation, not a plan.
 - [`base-system.md`](base-system.md) — the out-of-box promise (boots, shows a watchface, has a menu you can always exit, selects/starts faces and apps, receives packages, sleeps), gathered from every other doc below into one reference with a per-point status/gap/board-dependence breakdown. Start here.
 
 - [`smartwatch-system/`](smartwatch-system/README.md) — visual/UX concept for the future menu and Complication look-and-feel (watchface, list menus, domain screens, design tokens).
