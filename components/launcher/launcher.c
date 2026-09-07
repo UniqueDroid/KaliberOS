@@ -487,6 +487,22 @@ static void dispatch(const event_t *ev, const char *src) {
              ev->type, (unsigned long)ev->arg, src, L.state);
     char json[128];
     switch (ev->type) {
+    /* Touch bring-up (project chat 2026-09-07): solve the input
+     * bottleneck only - a board with no physical buttons (waveshare_
+     * c6_amoled) still needs to reach MENU and sync mode. No hit-
+     * testing yet (x/y in ev->arg are carried but deliberately unused
+     * here - js-api.md §6, wave 2's real touch UI is what needs them),
+     * a tap just synthesizes whichever button reaches the same state
+     * a button-driven board would use for "the one thing to do here" -
+     * re-dispatched as EV_BUTTON so this stays the ONLY place the
+     * WATCHFACE/MENU/APP state machine (§1) is implemented, not a
+     * second copy of it for touch. */
+    case EV_TOUCH_TAP: {
+        kb_button_t synth = (L.state == KB_LSTATE_MENU) ? KB_BTN_DOWN : KB_BTN_SELECT;
+        event_t synth_ev = { .type = EV_BUTTON, .arg = synth };
+        dispatch(&synth_ev, "touch-tap");
+        return;
+    }
     case EV_BUTTON:
         kb_power_touch();
         /* State transitions (docs/design/launcher-states.md §1) -

@@ -19,6 +19,15 @@ extern "C" {
 typedef enum {
     EV_NONE = 0,
     EV_BUTTON,          /* arg = kb_button_t                                 */
+    /* arg = (x << 16) | y, both normalized 0..1000 (permille of panel
+     * w/h) - a board's raw pixel resolution never crosses this
+     * boundary, same reasoning display_ops_t already applies to blit
+     * coordinates. First consumer (launcher.c dispatch(), 2026-09-07's
+     * touch bring-up) only asks "was there a tap", not "where" - the
+     * position is carried now anyway, not added later, because wave 2's
+     * real touch UI (js-api.md §6) will need it and re-deriving it from
+     * a bare "something happened" signal isn't possible after the fact. */
+    EV_TOUCH_TAP,
     EV_TICK_MINUTE,
     EV_TIMER,           /* arg = js timer id                                 */
     EV_NET_RESULT,      /* payload = net_result_t*, ownership -> consumer    */

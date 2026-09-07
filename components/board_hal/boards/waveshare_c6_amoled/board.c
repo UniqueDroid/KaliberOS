@@ -42,6 +42,8 @@
 #include "esp_sleep.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "driver/i2c_master.h"
+#include "driver/gpio.h"
 
 #include "board_hal/board.h"
 #include "core/event_bus.h"
@@ -138,15 +140,172 @@ static const display_ops_t disp_ops = {
 
 /* ------------------------------------------------------------------ input */
 
-/* No physical buttons on this board at all (Waveshare's own BSP header:
- * BSP_CAPS_BUTTONS 0) - touch (FT3168, pins.h) is the only input, and is
- * explicitly "later" for this bring-up milestone (project chat
- * 2026-09-05). A touch-driven launcher is a real design question of its
- * own (Simon's js-api.md roadmap note: "ein AMOLED mit Touch legt ein
- * anderes Wachmodell nahe als Timer-Ticks"), not something to bolt on
- * here as a KB_BTN_* mapping - there is nothing to map to. */
-static esp_err_t input_init(void) { return ESP_OK; }
-static esp_err_t input_arm_wake(void) { return ESP_OK; }
+/* FT3168 touch controller (FT5x06-family protocol, I2C addr 0x38,
+ * pins.h) - the only input on this board (no physical buttons,
+ * Waveshare's own BSP: BSP_CAPS_BUTTONS 0). First-pass scope only
+ * (project chat 2026-09-07, explicit constraint): solve the input
+ * bottleneck - detect a tap, post it to the event bus, so MENU/sync-
+ * mode become reachable at all. No gestures, no multi-touch, no per-
+ * widget hit-testing, no JS event API - that's wave 2 and needs the
+ * lifecycle contract this doc doesn't settle (js-api.md §6). What
+ * crosses the HAL boundary here is a normalized tap position
+ * (event_bus.h's EV_TOUCH_TAP), not register layouts or the controller
+ * name - the FT3168-specific bytes below never leave this file.
+ *
+ * Register map + init sequence verified against Waveshare's own
+ * Arduino_FT3x68.cpp/h (github.com/waveshareteam/ESP32-C6-Touch-AMOLED-
+ * 2.06, examples/arduino/libraries/Arduino_DriveBus/src/touch_chip/,
+ * fetched directly 2026-09-07, same "reference, not a dependency"
+ * discipline as this board's display init sequence above) - not
+ * guessed from the generic FT5x06 datasheet. Finger count (0x02) and
+ * X1/Y1 position (0x03-0x06, high nibble + low byte per axis) read on
+ * each interrupt.
+ *
+ * Two real findings from live bring-up (2026-09-07), both load-bearing:
+ * (1) the reset pulse on PIN_TOUCH_RESET (GPIO10) is required, not
+ * optional - without it the chip was silent on the *entire* I2C bus
+ * (confirmed via a bus scan, not just "didn't ACK at 0x38"), matching a
+ * chip sitting in hardware reset. pins.h's older comment worried this
+ * pin might be shared with the LCD's reset line (GPIO11) - it isn't,
+ * or if the silicon net is shared, pulsing it again after disp_init()
+ * already completed causes no visible display issue (checked). (2)
+ * power-mode register 0xA5 is set to 0x00 (active/continuous scan),
+ * not Waveshare's own 0x01 (monitor/low-power) - monitor mode was
+ * never retested after fixing the reset pulse, so it may well also
+ * work now; active mode is simply what was confirmed working end to
+ * end (real taps reaching the launcher, MENU and sync-mode both
+ * reached) and this milestone's scope is "solve the bottleneck," not
+ * "minimize touch power" - a real follow-up, not a silent choice. */
+#define FT3168_I2C_ADDR        0x38
+#define FT3168_REG_POWER_MODE  0xA5
+#define FT3168_REG_FINGERNUM   0x02
+#define FT3168_REG_X1_H        0x03
+#define FT3168_REG_X1_L        0x04
+#define FT3168_REG_Y1_H        0x05
+#define FT3168_REG_Y1_L        0x06
+
+static i2c_master_bus_handle_t s_i2c_bus;
+static i2c_master_dev_handle_t s_touch_dev;
+static TaskHandle_t s_touch_task;
+
+static bool ft3168_read_reg(uint8_t reg, uint8_t *out) {
+    return i2c_master_transmit_receive(s_touch_dev, &reg, 1, out, 1, 100) == ESP_OK;
+}
+
+/* I2C reads aren't ISR-safe (blocking, not IRAM-resident) - the ISR
+ * below only wakes this task, which does the actual register reads and
+ * posts the bus event. Same split watchy_v3's btn_isr() doesn't need
+ * (a button ISR already knows which button, nothing to read), the
+ * reason touch can't just be "one more IRAM_ATTR handler". */
+static void touch_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        uint8_t fingers = 0;
+        if (!ft3168_read_reg(FT3168_REG_FINGERNUM, &fingers) || fingers == 0) continue;
+
+        uint8_t xh, xl, yh, yl;
+        if (!ft3168_read_reg(FT3168_REG_X1_H, &xh) || !ft3168_read_reg(FT3168_REG_X1_L, &xl) ||
+            !ft3168_read_reg(FT3168_REG_Y1_H, &yh) || !ft3168_read_reg(FT3168_REG_Y1_L, &yl)) {
+            continue;
+        }
+        uint16_t x = (uint16_t)(((xh & 0x0F) << 8) | xl);
+        uint16_t y = (uint16_t)(((yh & 0x0F) << 8) | yl);
+
+        /* Normalized 0..1000 (permille of panel w/h) - event_bus.h's
+         * EV_TOUCH_TAP contract, DISP_W/DISP_H stay inside this file. */
+        uint32_t nx = (uint32_t)x * 1000 / DISP_W;
+        uint32_t ny = (uint32_t)y * 1000 / DISP_H;
+        if (nx > 1000) nx = 1000;
+        if (ny > 1000) ny = 1000;
+
+        event_t ev = { .type = EV_TOUCH_TAP, .arg = (nx << 16) | ny };
+        kb_bus_post(&ev);
+    }
+}
+
+static void IRAM_ATTR touch_isr(void *arg) {
+    (void)arg;
+    BaseType_t hpw = pdFALSE;
+    vTaskNotifyGiveFromISR(s_touch_task, &hpw);
+    if (hpw) portYIELD_FROM_ISR();
+}
+
+static esp_err_t input_init(void) {
+    /* Reset pulse first, before any I2C traffic - see this file's
+     * header comment above (finding 1): without it the chip never
+     * responds at all. Sequence from Waveshare's own Arduino_FT3x68.cpp:
+     * idle HIGH, pulse LOW 20ms, back HIGH, settle 50ms. */
+    gpio_config_t rst_cfg = {
+        .pin_bit_mask = 1ULL << PIN_TOUCH_RESET,
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&rst_cfg);
+    gpio_set_level(PIN_TOUCH_RESET, 1);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    gpio_set_level(PIN_TOUCH_RESET, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level(PIN_TOUCH_RESET, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    const i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = PIN_I2C_SDA,
+        .scl_io_num = PIN_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_i2c_bus);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "touch: i2c bus init failed: %s", esp_err_to_name(err));
+        return ESP_OK; /* Real gap, not fatal - board still boots/displays without touch. */
+    }
+
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = FT3168_I2C_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    err = i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_touch_dev);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "touch: i2c device add failed: %s", esp_err_to_name(err));
+        return ESP_OK;
+    }
+
+    /* Active/continuous scan mode, not Waveshare's own 0x01 (monitor)
+     * - see this file's header comment (finding 2) for why. */
+    uint8_t init_buf[2] = { FT3168_REG_POWER_MODE, 0x00 };
+    err = i2c_master_transmit(s_touch_dev, init_buf, sizeof init_buf, 100);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "touch: FT3168 not responding at 0x%02X (%s) - no touch input this boot",
+                 FT3168_I2C_ADDR, esp_err_to_name(err));
+        return ESP_OK;
+    }
+
+    xTaskCreate(touch_task, "touch", 3072, NULL, 5, &s_touch_task);
+
+    const gpio_config_t int_cfg = {
+        .pin_bit_mask = 1ULL << PIN_TOUCH_INT,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .intr_type = GPIO_INTR_NEGEDGE, /* low pulse on touch, Waveshare's own driver comment */
+    };
+    gpio_config(&int_cfg);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(PIN_TOUCH_INT, touch_isr, NULL);
+
+    ESP_LOGI(TAG, "FT3168 touch init done");
+    return ESP_OK;
+}
+
+static esp_err_t input_arm_wake(void) {
+    /* Always-on model (caps.sleep_model_deep = false, below) - no deep-
+     * sleep wake sources to arm, same reasoning as power_wake_cause()'s
+     * comment. */
+    return ESP_OK;
+}
 
 static const input_ops_t input_ops = {
     .init = input_init, .arm_wake = input_arm_wake,

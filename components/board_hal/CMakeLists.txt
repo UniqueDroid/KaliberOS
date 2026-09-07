@@ -13,5 +13,8 @@ idf_component_register(
     # display driver only (see that board's board.c) - unused, harmless
     # REQUIRES for every other board, same as any dependency only one
     # board's board.c actually calls into.
-    PRIV_REQUIRES core esp_lcd waveshare__esp_lcd_sh8601 espressif__esp_lcd_panel_io_additions
+    # esp_driver_i2c: waveshare_c6_amoled's FT3168 touch driver only
+    # (I2C), same "unused elsewhere, harmless" reasoning as the lcd deps
+    # above.
+    PRIV_REQUIRES core esp_lcd esp_driver_i2c waveshare__esp_lcd_sh8601 espressif__esp_lcd_panel_io_additions
 )

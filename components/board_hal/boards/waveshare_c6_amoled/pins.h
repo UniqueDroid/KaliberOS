@@ -46,4 +46,9 @@
 #define PIN_I2C_SDA    8
 #define PIN_I2C_SCL    7
 #define PIN_TOUCH_INT  15
-#define PIN_TOUCH_RESET 10 /* shared with the LCD's reset line per the BSP - not a typo */
+/* Its own real reset line, NOT shared with the LCD's (GPIO11) despite
+ * an earlier, wrong assumption here - confirmed 2026-09-07 bring-up:
+ * the FT3168 was silent on the whole I2C bus until this pin was
+ * actively pulsed (board.c's input_init()), independent of the LCD's
+ * own already-completed reset. See docs/design/board-bringup-notes.md. */
+#define PIN_TOUCH_RESET 10
