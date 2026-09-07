@@ -29,28 +29,43 @@ is ever actually true today - the wake-cause switch in `power_wake_cause()`
 is a real switch, not hardcoded, so a future light-sleep model has
 somewhere to plug in, but nothing drives it there yet.
 
-**Missing.** Nothing at the "does it boot" level. RTC on
+**Missing, and a real break of this section's own promise, not a minor
+gap** (sharpened, review round, project chat 2026-09-07): RTC on
 waveshare_c6_amoled (PCF85063, `board-bringup-notes.md`'s "next at risk"
-list) isn't wired up - wall-clock time survives a *sleep* on watchy_v3
-(RTC keeps ticking) but nothing on either board keeps time across a full
-power-off; both rely on `atelier push`'s piggybacked `/time` POST for a
-correct clock at all until an RTC or SNTP source lands.
+list) isn't wired up, and neither board keeps time across a full
+power-off - watchy_v3's crystal keeps ticking across a *sleep*, but a
+genuinely fresh boot (first flash, or any full power-loss) has no clock
+source at all until `atelier push`'s piggybacked `/time` POST sets one.
+A freshly-flashed device "boots" in the narrow sense of §1's own
+heading, but its watchface (§2) shows `"??:??"` until someone pushes a
+package to it - the out-of-box promise's very first clause quietly
+depends on its fifth (§5, receiving a package) having already happened
+once. Worth stating this dependency explicitly rather than letting each
+section read as if it stood alone.
 
 ## 2. Shows a watchface
 
 **Stands, on both boards.** `kb_store_install_default_face()`
 (`app_store.c`) self-signs and installs a real Cadran watchface
 (`examples/watchfaces/default`) on first boot - unconditionally, no
-network needed. `cadran_render()` draws it without booting the JS engine
-on every subsequent tick (`cadran-watchface-engine.md`'s whole point).
-Layout is relative to `ctx.w`/`ctx.h`, not hardcoded per board - verified
-on both the 200×200 e-ink panel and the 410×502 AMOLED panel with the
-same face content.
+network needed. `cadran_render()` itself draws without booting the JS
+engine at all - a pure-C tick render is the whole design's core promise
+(`cadran-watchface-engine.md` §1). Layout is relative to `ctx.w`/`ctx.h`,
+not hardcoded per board - verified on both the 200×200 e-ink panel and
+the 410×502 AMOLED panel with the same face content.
 
-**Missing.** No face.bin caching yet - every wake still reboots the
-engine to re-run `build()` before falling back to the pure-C render path
-(`cadran-watchface-engine.md` §9 step 6's own flagged gap). Not wrong,
-just not the optimization the design's core promise describes yet.
+**Missing, and this is the promise not actually kept yet, not a minor
+optimization gap** (sharpened, review round, project chat 2026-09-07):
+no `face.bin` caching exists, so *every single wake* still boots the
+full engine and re-runs `build()` before the pure-C render path above
+ever gets a chance to run alone (`cadran-watchface-engine.md` §9 step
+6's own flagged gap). Concretely, on watchy_v3: **~62 KB of engine init
+cost, every minute tick**, the same 62 KB Criterion 1's own measurement
+names as the plain cost of booting Unruh at all - not a fixed one-time
+price paid once at install, paid again on every single wake today. This
+is worth naming precisely because it inverts the doc's own opening
+sentence in §2 above until it's fixed: the pure-C render path exists and
+works, but it isn't actually what runs a watchface today.
 
 **A guarantee, stated as one, not left as an incidental fact** (review
 round, project chat 2026-09-07): a freshly-flashed device with zero
@@ -149,11 +164,20 @@ real mechanism, and one with a real side effect:
 `kb_store_install_default_face()`'s self-heal skip-guard triggers on
 *any* differently-id'd watchface package existing, so leaving one
 installed (even for testing) silently disables the default face's own
-self-repair (`launcher-states.md`'s flagged note on this).
+self-repair (`launcher-states.md`'s flagged note on this) - **not
+theoretical**: the waveshare_c6_amoled test unit used for the
+2026-09-07 acceptance tests still has `kaliber.dashboard` installed
+right now, with no uninstall mechanism (§5) to remove it again short of
+a full reflash, so that board's default-face self-heal stays disabled
+until one exists. Real-world state, not a hypothetical risk.
 
 App selection/start has even less: `enter_app_placeholder()`
 (`launcher.c`) boots *a* app if one exists, no choice of which. This is
-Phase 2.2/2.3's whole scope - not designed further here.
+Phase 2.2/2.3's whole scope - not designed further here. **Uninstall
+belongs in this phase too, not as a §5 footnote** - a menu that can
+select a watchface but can never remove one it no longer wants (or
+recover self-heal from the state above) only solves half of "selecting
+and starting," and the same missing mechanism causes both gaps.
 
 **Board-dependent.** Not yet, because nothing exists yet to be
 board-dependent about - the eventual menu is explicitly one state
