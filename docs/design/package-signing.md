@@ -65,6 +65,24 @@ is no separate "device to push to" for this one package, it was never
 going through `atelier` in the first place, so the provenance problem
 above never applied to it.
 
+## 3a. A deliberate tradeoff, flagged rather than left silent
+
+**The sync screen showing the device's key in plaintext is a real
+exposure, stated here on purpose** (review round, project chat
+2026-09-07 - same discipline js-api.md §1a already applies to its own
+divergences, worth repeating here rather than letting this one pass
+silently): anyone who can see the screen during sync mode can read the
+install secret, same as they could already read the WiFi
+SSID/password shown right above it. Acceptable for a hobby project's
+threat model, not a property to forget about later - the mitigating
+facts are that sync mode is **user-initiated** (a tap/button press, not
+something that happens on its own) and **time-limited**
+(`KALIBER_NET_SYNC_TIMEOUT_S`, the AP and the screen both go away on
+their own), so the exposure window is short and requires physical
+proximity, not an always-on broadcast. Worth revisiting if this project
+ever moves past "read it off my own watch and type it into my own
+laptop" - not designed further here.
+
 ## 4. Package format: forward-compatible on purpose
 
 The old `sig.hmac` entry held a bare 64-hex-char signature and nothing
