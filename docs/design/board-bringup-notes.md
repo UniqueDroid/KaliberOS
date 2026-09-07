@@ -33,6 +33,22 @@ signal than a scan finding the address present but NAKing a specific
 command - the former points straight at reset/power, the latter at
 addressing or protocol.
 
+**The even more general form of this rule** (project chat 2026-09-07,
+after this was the third time a related-source assumption turned out
+not to hold for this specific board): **a reset pin is never optional
+until proven otherwise on the actual device in hand** - not "the
+reference driver treats it as optional," not "it probably shares a net
+with another already-reset pin," proven, on this board, with a scope or
+a bus scan. `waveshare_c6_amoled` has at least three more chips on the
+same general pattern (I2C peripheral, dedicated reset line) still ahead
+of it - QMI8658 (IMU, js-api.md's Step provider), PCF85063 (RTC, not
+wired up yet), and the SH8601/CO5300 AMOLED panel itself (already
+handled correctly, `disp_init()` does pulse `PIN_LCD_RESET` - the one
+chip on this board that never hit this bug, because nobody skipped its
+reset pulse in the first place). Whichever of these gets bricked up
+next: pulse its reset pin from the start, don't wait for the same
+silent-bus symptom to reappear and cost the same debugging pass again.
+
 Also found in the same session: switching a chip's documented default
 power mode (here, FT3168's "monitor"/low-power mode, register `0xA5` =
 `0x01`) to a more verbose always-on mode (`0x00`, active/continuous
