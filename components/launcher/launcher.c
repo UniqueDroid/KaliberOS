@@ -273,6 +273,22 @@ static int screen_line_gap(const board_desc_t *b) {
     return g < 15 ? 15 : g;
 }
 
+/* Headline font pick (project chat 2026-09-30, Simon: the 8x8 font
+ * integer-upscaled "ergibt Klötze" - the actual reason Jan couldn't judge
+ * the last redesign). tools/fontgen/gen_bitmap_font.py's gfx_font_16/
+ * gfx_font_32 are rasterized natively at each size, no upscaling blur/
+ * blockiness - but their fixed native width means a long headline can
+ * overflow a narrow panel (watchy_v3, 200px) at the bigger size where it
+ * wouldn't on the C6's 410px one. Pick the biggest of the two that still
+ * fits this board's own width for this specific string, rather than a
+ * per-board special case - generic over disp_w like every other layout
+ * helper here. */
+static const gfx_font_t *headline_font(const board_desc_t *b, const char *str, int margin) {
+    int avail = b->caps.disp_w - 2 * margin;
+    int w32 = (int)strlen(str) * gfx_font_32.width;
+    return (w32 <= avail) ? &gfx_font_32 : &gfx_font_16;
+}
+
 static void draw_no_apps_screen(void) {
     const board_desc_t *b = board_get();
     ESP_LOGW(TAG, "no complications installed");
@@ -284,7 +300,7 @@ static void draw_no_apps_screen(void) {
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, margin, y0, "NO APPS", 3);
+        gfx_draw_text_font(&ctx, margin, y0, "NO APPS", 1, headline_font(b, "NO APPS", margin));
         /* Full instructions belong in the README, not squeezed onto the
          * panel - this is a pointer, not a manual. */
         gfx_draw_text(&ctx, margin, y0 + gap * 3, "atelier push", 2);
@@ -309,7 +325,7 @@ static void draw_menu_placeholder(void) {
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, margin, y0, "MENU", 3);
+        gfx_draw_text_font(&ctx, margin, y0, "MENU", 1, headline_font(b, "MENU", margin));
         gfx_draw_text(&ctx, margin, y0 + gap * 3, "SELECT: open", 1);
         gfx_draw_text(&ctx, margin, y0 + gap * 4, "BACK:   watchface", 1);
         gfx_draw_text(&ctx, margin, y0 + gap * 5, "DOWN:   install", 1);
@@ -346,7 +362,7 @@ static void draw_wake_check_screen(const char *msg) {
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text(&ctx, margin, y0, "WAKE CHECK", 2);
+        gfx_draw_text_font(&ctx, margin, y0, "WAKE CHECK", 1, headline_font(b, "WAKE CHECK", margin));
         gfx_draw_text(&ctx, margin, y0 + gap * 2, msg, 1);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
@@ -529,7 +545,15 @@ static void dispatch(const event_t *ev, const char *src) {
      * BACK already do. UP/DOWN/LEFT are classified and logged but
      * deliberately not wired to anything yet - Phase 2's real menu
      * (scrolling, etc.) decides their meaning, not guessed at here. */
+    case EV_TOUCH_TAP:
+        /* Not consumed for navigation (see the comment above), but still
+         * real user activity - resets the idle timer same as a button
+         * press would (project chat 2026-09-30), so a tap that doesn't
+         * do anything visible still counts as "someone's there." */
+        kb_power_touch();
+        return;
     case EV_TOUCH_SWIPE: {
+        kb_power_touch();
         if ((kb_swipe_dir_t)ev->arg == KB_SWIPE_RIGHT) {
             kb_button_t synth = (L.state == KB_LSTATE_WATCHFACE) ? KB_BTN_SELECT : KB_BTN_BACK;
             event_t synth_ev = { .type = EV_BUTTON, .arg = synth };
@@ -567,7 +591,14 @@ static void dispatch(const event_t *ev, const char *src) {
          * its own documented USB-noise history (board.c), not a button
          * worth pairing with "now go turn WiFi on". */
         if (ev->arg == KB_BTN_DOWN && L.state == KB_LSTATE_MENU) {
+            /* Pause the idle timer for the duration - sync mode has its
+             * own 120s timeout already, a second independent one racing
+             * alongside could revert to WATCHFACE mid-transfer (project
+             * chat 2026-09-30, Simon's review). Resume with a fresh
+             * window right after, not a stale partially-elapsed one. */
+            kb_power_pause();
             kb_net_svc_run_sync_mode();
+            kb_power_touch();
             draw_menu_placeholder();
             return;
         }
@@ -583,7 +614,20 @@ static void dispatch(const event_t *ev, const char *src) {
         free(ev->payload);
         return;
     case EV_IDLE_TIMEOUT:
-        if (board_get()->caps.sleep_model_deep) app_suspend_and_sleep();
+        /* Deep model: suspend + sleep, unchanged. Light model (project
+         * chat 2026-09-30, base-system.md §3a's open point, resolved):
+         * no sleep to fall into, but the same "always get back out"
+         * promise still applies - a menu/app left open and forgotten
+         * resolves back to the watchface on its own, same as BACK would,
+         * just triggered by inactivity instead of a button/gesture. Not
+         * power-motivated here (nothing to save, the panel's on either
+         * way) - purely so the device doesn't sit indefinitely showing
+         * something other than the time because someone walked away. */
+        if (board_get()->caps.sleep_model_deep) {
+            app_suspend_and_sleep();
+        } else if (L.state != KB_LSTATE_WATCHFACE) {
+            enter_watchface();
+        }
         return;
     default:
         return;

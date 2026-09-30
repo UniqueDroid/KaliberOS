@@ -47,6 +47,39 @@ typedef struct {
  */
 void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scale);
 
+/**
+ * A second bitmap font, rasterized at its own native resolution instead
+ * of integer-upscaled from the 8x8 one (project chat 2026-09-30:
+ * upscaling "ergibt Klötze" - blocky, unreadable at any scale beyond
+ * 2-3x; a bigger font rasterized from the same TTF at its own size
+ * looks like a font, not upscaled pixels). No runtime rasterizer, no
+ * antialiasing - these are still fixed 1-bit glyph tables, generated
+ * offline by tools/fontgen/gen_bitmap_font.py, just at a larger native
+ * size than gfx_font8x8.h's. `scale` still works the same way
+ * (`scale=1` draws at native resolution, `scale=2` doubles every pixel,
+ * etc.) - upscaling a *bigger* base font by a *smaller* multiplier
+ * looks fine, the blockiness only shows up when the multiplier itself
+ * is large relative to the base glyph.
+ */
+typedef struct {
+    const uint8_t *data;    /* flat, glyph-major: height rows of row_bytes
+                              * each per glyph, MSB-first - see whichever
+                              * gfx_fontNxN.h generated this */
+    uint16_t       width, height;
+    uint8_t        row_bytes;
+    uint8_t        first, last; /* ASCII range covered, e.g. 0x20/0x7e */
+} gfx_font_t;
+
+extern const gfx_font_t gfx_font_16; /* components/gfx/gfx_font16x16.h */
+extern const gfx_font_t gfx_font_32; /* components/gfx/gfx_font32x32.h */
+
+/* Same contract as gfx_draw_text(), plus an explicit font - use this for
+ * anything that needs to be legible at a glance (headlines, the
+ * watchface's own time display) instead of upscaling the 8x8 font
+ * further than it can bear. */
+void gfx_draw_text_font(const gfx_ctx_t *ctx, int x, int y, const char *str,
+                         int scale, const gfx_font_t *font);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,10 +1,23 @@
 #include "gfx/text.h"
 #include "gfx_font8x8.h"
+#include "gfx_font16x16.h"
+#include "gfx_font32x32.h"
 
 #define FONT_FIRST 0x20
 #define FONT_LAST  0x7e
 #define FONT_W 8
 #define FONT_H 8
+
+/* tools/fontgen/gen_bitmap_font.py's tables, not integer-upscaled - see
+ * gfx/text.h's own comment on gfx_font_t. */
+const gfx_font_t gfx_font_16 = {
+    .data = font16x16, .width = FONT16X16_W, .height = FONT16X16_H,
+    .row_bytes = FONT16X16_ROW_BYTES, .first = 0x20, .last = 0x7e,
+};
+const gfx_font_t gfx_font_32 = {
+    .data = font32x32, .width = FONT32X32_W, .height = FONT32X32_H,
+    .row_bytes = FONT32X32_ROW_BYTES, .first = 0x20, .last = 0x7e,
+};
 
 /* Same fb-write logic as cadran/render.c's private set_px (E-ink: clearing
  * a bit draws; AMOLED RGB565: writes black on a white-cleared background,
@@ -55,5 +68,33 @@ void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scal
             }
         }
         pen_x += FONT_W * scale;
+    }
+}
+
+void gfx_draw_text_font(const gfx_ctx_t *ctx, int x, int y, const char *str,
+                         int scale, const gfx_font_t *font) {
+    if (!ctx || !ctx->fb || !ctx->board || !str || !font || !font->data) return;
+    if (scale < 1) scale = 1;
+
+    int pen_x = x;
+    for (const unsigned char *p = (const unsigned char *)str; *p; p++) {
+        unsigned char c = *p;
+        const uint8_t *glyph = (c >= font->first && c <= font->last)
+            ? font->data + (size_t)(c - font->first) * font->height * font->row_bytes
+            : NULL;
+        if (glyph) {
+            for (int gy = 0; gy < font->height; gy++) {
+                const uint8_t *row = glyph + (size_t)gy * font->row_bytes;
+                for (int gx = 0; gx < font->width; gx++) {
+                    if (!(row[gx / 8] & (0x80 >> (gx % 8)))) continue;
+                    int px0 = pen_x + gx * scale;
+                    int py0 = y + gy * scale;
+                    for (int sy = 0; sy < scale; sy++)
+                        for (int sx = 0; sx < scale; sx++)
+                            set_px(ctx, px0 + sx, py0 + sy);
+                }
+            }
+        }
+        pen_x += font->width * scale;
     }
 }
