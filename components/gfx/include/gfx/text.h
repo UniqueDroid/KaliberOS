@@ -73,6 +73,18 @@ typedef struct {
 extern const gfx_font_t gfx_font_16; /* components/gfx/gfx_font16x16.h */
 extern const gfx_font_t gfx_font_32; /* components/gfx/gfx_font32x32.h */
 
+/* Digits + colon only (0x30-0x3a, contiguous in ASCII - '0'-'9' then ':'
+ * right after), not full ASCII - a clock face never needs letters at
+ * this size, and restricting the range is what makes a size this big
+ * affordable in flash (11 glyphs vs. 95 - see gen_bitmap_font.py's own
+ * comment). Any character outside 0x30-0x3a renders as a blank cell,
+ * same as gfx_draw_text()'s out-of-range behavior - not usable for
+ * general text, only for the digit/colon strings a time display needs.
+ * Named for its intended role (docs/design/cadran-watchface-engine.md
+ * §5a's "large"), not its pixel size, on purpose - that's the thing a
+ * face is meant to ask for. */
+extern const gfx_font_t gfx_font_time_large; /* components/gfx/gfx_font96x96.h */
+
 /* Same contract as gfx_draw_text(), plus an explicit font - use this for
  * anything that needs to be legible at a glance (headlines, the
  * watchface's own time display) instead of upscaling the 8x8 font

@@ -92,7 +92,9 @@ Deliberately close to the Zepp vocabulary:
 - `img_digits` — number rendering from an image set (the classic Zepp
   `IMG_TIME`/`TEXT_IMG` pattern). `layout` uses placeholder chars
   (`HH:MM`, `DD.`, `W`).
-- `text` — built-in bitmap font + `format` string with `{v}`.
+- `text` — built-in bitmap font + `format` string with `{v}`. `font` is a
+  **role**, not a pixel size (§5a) — `"sys8"` in the example above predates
+  the role naming below and should read as `"small"`.
 - `arc` — arc progress, `bind` + `min`/`max`.
 - `img_level` — one image out of N by value range (battery bars, moon
   phases).
@@ -133,6 +135,58 @@ section is one half of, including why §3's skip-not-error rule (not a
 placeholder) is the answer for every capability-absent provider except
 the one documented exception (`time.hm`'s `"??:??"`, immediately
 below).
+
+## 5a. Font roles, not pixel sizes
+
+(project chat 2026-09-30, following the gfx bitmap-font work in
+`components/gfx/` - `gfx_font16x16.h`/`gfx_font32x32.h` today, a larger
+digits-only size next.) A `text` widget's `font` field is one of a small,
+fixed set of **roles** - `"large"` / `"medium"` / `"small"` - never a raw
+pixel value. The reasoning is the same one `build()`'s own `ctx.w`/`ctx.h`
+branching already exists for: a face is one `face.bin`, shared across
+boards with wildly different panels (200 px, 410-502 px today, more
+later). A face that requested "48 px" would be right on one board and
+wrong on every other - a role lets the *renderer* pick the concrete font
+for *this* panel, keeping the same `face.bin` valid everywhere, which is
+the whole point of building faces once at `build()` time instead of per
+board.
+
+Resolution happens in `cadran_render()`, per stripe, the same place
+`launcher.c`'s `headline_font()` already does this for native screens
+(§8's `draw_menu_placeholder()` etc. - that helper is this rule's first,
+smaller instance, not a separate mechanism): pick the largest font
+registered for the requested role that still fits this board's panel for
+the widget's actual rendered string (width-fit check against
+`ctx->board->caps.disp_w`, same as `headline_font()`).
+
+**Fallback is mandatory, not an error path**: if the size a role would
+naturally resolve to doesn't exist on this board (not registered) or
+doesn't fit (string too wide for the panel at that size), the renderer
+steps down to the next-smaller role and retries - `large` → `medium` →
+`small`. `small` (the 16x16 font, always registered) is the floor and
+always fits, the same way `gfx_draw_text()`'s original 8x8 font always
+did - a face never fails to render for a font reason, it just renders a
+size smaller than requested. This mirrors §3's "skip, don't error" rule
+for capability-absent providers: a size that isn't available degrades,
+it doesn't break the face.
+
+Which concrete `gfx_font_t` backs which role, and whether a role's font
+is full-ASCII or a restricted charset (digits+colon only, for flash cost
+- large is the size most likely to be digits-only, since a `text` widget
+bound to `time.hm` never needs letters), is a firmware-side registration
+table, not part of `face.bin` - a face names a role, never a font table
+directly, so adding/re-tuning sizes later doesn't touch any already-
+serialized face.
+
+Not yet implemented: `face_format.h`'s widget record still only carries
+`params[0]` as a plain scale factor (`render.c`'s `draw_text()`). This
+section documents the target shape; the change is `params[0]` becoming a
+role enum (0=small/1=medium/2=large, small as the zero-value default so
+an old/hand-written test blob with `params[0]==0` keeps working
+unchanged) plus the resolve-with-fallback loop above in `draw_text()`.
+`js_watchface.c`'s JS-side `font: "large"/"medium"/"small"` string→enum
+mapping is the matching half, same shape as its existing provider-name
+table.
 
 ## 6. face.bin format
 
