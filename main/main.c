@@ -141,7 +141,14 @@ void app_main(void) {
      * mode() is now called from launcher.c's dispatch() (MENU state,
      * DOWN button) instead - a real menu entry replaces this once §3
      * lands, same as the rest of draw_menu_placeholder(). */
-    kb_power_cfg_t pcfg = { .idle_timeout_ms = 15000, .tick_interval_s = 60 };
+    /* light_idle_timeout_ms deliberately much longer than idle_timeout_ms
+     * (project chat 2026-09-30) - the deep model's 15s is tuned for "an
+     * app left running unattended," the light model's own timer is for
+     * "someone's still reading/scrolling a menu," a slower thing to
+     * mistake for idle. Only the always-on board (waveshare_c6_amoled)
+     * ever uses this value - power_mgr.c resolves which one applies once
+     * at kb_power_init(), based on caps.sleep_model_deep. */
+    kb_power_cfg_t pcfg = { .idle_timeout_ms = 15000, .light_idle_timeout_ms = 60000, .tick_interval_s = 60 };
     ESP_ERROR_CHECK(kb_power_init(&pcfg));
 
     /* Deliberately after the sync-mode block, not right where the selftest

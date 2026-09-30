@@ -8,6 +8,10 @@
 static const char *TAG = "power";
 static kb_power_cfg_t s_cfg;
 static esp_timer_handle_t s_idle;
+static uint32_t s_idle_ms; /* resolved once at init - which of the two
+                            * cfg durations actually applies, so
+                            * kb_power_touch() doesn't need to re-check
+                            * sleep_model_deep on every call. */
 
 static void idle_cb(void *arg) {
     (void)arg;
@@ -17,18 +21,26 @@ static void idle_cb(void *arg) {
 
 esp_err_t kb_power_init(const kb_power_cfg_t *cfg) {
     s_cfg = *cfg;
-    if (board_get()->caps.sleep_model_deep) {
-        const esp_timer_create_args_t a = { .callback = idle_cb, .name = "kb_idle" };
-        ESP_ERROR_CHECK(esp_timer_create(&a, &s_idle));
-        kb_power_touch();
-    }
+    /* Timer now runs on both models (project chat 2026-09-30) - only the
+     * meaning of EV_IDLE_TIMEOUT differs (dispatch()'s own switch), not
+     * whether the timer exists. */
+    s_idle_ms = board_get()->caps.sleep_model_deep
+        ? s_cfg.idle_timeout_ms : s_cfg.light_idle_timeout_ms;
+    const esp_timer_create_args_t a = { .callback = idle_cb, .name = "kb_idle" };
+    ESP_ERROR_CHECK(esp_timer_create(&a, &s_idle));
+    kb_power_touch();
     return ESP_OK;
 }
 
 void kb_power_touch(void) {
     if (!s_idle) return;
     esp_timer_stop(s_idle);
-    esp_timer_start_once(s_idle, (uint64_t)s_cfg.idle_timeout_ms * 1000);
+    esp_timer_start_once(s_idle, (uint64_t)s_idle_ms * 1000);
+}
+
+void kb_power_pause(void) {
+    if (!s_idle) return;
+    esp_timer_stop(s_idle);
 }
 
 void kb_power_deep_sleep(void) {
