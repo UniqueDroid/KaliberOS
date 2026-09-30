@@ -11,7 +11,7 @@ WatchFace({
   build: function (ctx) {
     return {
       widgets: [
-        { type: "text", x: 20, y: 80, bind: "time.hm", format: "{v}", scale: 6 }
+        { type: "text", x: 20, y: 80, bind: "time.hm", format: "{v}", font: "large" }
       ]
     };
   }

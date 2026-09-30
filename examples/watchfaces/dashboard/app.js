@@ -20,20 +20,27 @@
  * moment a board gets a real IMU driver, this same face starts showing
  * it with no face change - that's the acceptance test's actual point.
  *
- * Layout centered relative to ctx.w/ctx.h (not hardcoded per board, same
- * reasoning as examples/watchfaces/default/app.js's own header comment)
- * - width estimates per line are fixed-width guesses (5 chars "HH:MM",
- * 4 chars "100%", 11 chars "12345 steps"), not measured from the actual
- * live value, so centering is approximate for the two shorter lines,
- * same trade-off the default face already accepts for time.hm.
+ * font: "large"/"medium" (project chat 2026-09-30, design doc §5a) - a
+ * role, not a pixel size; render.c resolves each to the biggest font
+ * that covers the actual string and fits this board's panel, falling
+ * back toward "small" where it doesn't (steps.count's "12345 steps" is
+ * long enough that "medium" won't fit watchy_v3's 200px panel - it
+ * falls back to "small" there, same face.bin, no per-board branch
+ * here). Layout centered relative to ctx.w/ctx.h (not hardcoded per
+ * board, same reasoning as examples/watchfaces/default/app.js's own
+ * header comment) - charW below are *centering estimates* per role
+ * (roughly what each role's primary registered font actually measures),
+ * not measured from the live value or from whichever font C ends up
+ * resolving to, so centering is approximate, same trade-off the default
+ * face already accepts for its own time line.
  */
 WatchFace({
   build: function (ctx) {
-    var timeScale = 4, lineScale = 2;
-    var timeW = 5 * 8 * timeScale, timeH = 8 * timeScale;
-    var battW = 4 * 8 * lineScale;
-    var stepW = 11 * 8 * lineScale;
-    var lineH = 8 * lineScale;
+    var timeCharW = Math.floor(ctx.w / 6), timeH = Math.floor(timeCharW * 1.5);
+    var lineCharW = 32, lineH = 32; /* "medium" role's primary font, gfx_font_32 */
+    var timeW = 5 * timeCharW;         /* "HH:MM" */
+    var battW = 4 * lineCharW;         /* "100%" */
+    var stepW = 11 * lineCharW;        /* "12345 steps" */
     var gap = 8;
 
     var blockH = timeH + gap + lineH + gap + lineH;
@@ -44,17 +51,17 @@ WatchFace({
         {
           type: "text",
           x: Math.floor((ctx.w - timeW) / 2), y: top,
-          bind: "time.hm", format: "{v}", scale: timeScale
+          bind: "time.hm", format: "{v}", font: "large"
         },
         {
           type: "text",
           x: Math.floor((ctx.w - battW) / 2), y: top + timeH + gap,
-          bind: "battery.pct", format: "{v}%", scale: lineScale
+          bind: "battery.pct", format: "{v}%", font: "medium"
         },
         {
           type: "text",
           x: Math.floor((ctx.w - stepW) / 2), y: top + timeH + gap + lineH + gap,
-          bind: "steps.count", format: "{v} steps", scale: lineScale
+          bind: "steps.count", format: "{v} steps", font: "medium"
         }
       ]
     };

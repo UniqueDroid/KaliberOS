@@ -83,7 +83,7 @@ extern const gfx_font_t gfx_font_32; /* components/gfx/gfx_font32x32.h */
  * Named for its intended role (docs/design/cadran-watchface-engine.md
  * §5a's "large"), not its pixel size, on purpose - that's the thing a
  * face is meant to ask for. */
-extern const gfx_font_t gfx_font_time_large; /* components/gfx/gfx_font96x96.h */
+extern const gfx_font_t gfx_font_time_large; /* components/gfx/gfx_font64x96.h */
 
 /* Same contract as gfx_draw_text(), plus an explicit font - use this for
  * anything that needs to be legible at a glance (headlines, the

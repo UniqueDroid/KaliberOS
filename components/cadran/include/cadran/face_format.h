@@ -39,7 +39,16 @@ _Static_assert(sizeof(cadran_header_t) == 8, "cadran header must be 8 bytes");
  *   RECT          w           h           filled(0/1) -
  *   LINE          x2          y2          -           -
  *   HAND          len         -           -           -
- *   TEXT/IMG/...  (reserved - not interpreted by this build yet)
+ *   TEXT          font role   -           -           -
+ *   IMG/...       (reserved - not interpreted by this build yet)
+ *
+ * TEXT's params[0] is a cadran_font_role_t, not a pixel size or scale
+ * factor (docs/design/cadran-watchface-engine.md §5a) - 0 (SMALL) is
+ * the zero-value default, so an old face built before this field
+ * existed, or a hand-written test blob that never sets params[0],
+ * still renders (at the smallest, always-available size) rather than
+ * reading garbage. render.c resolves the role to a concrete font per
+ * board/string at render time; the mapping is never serialized.
  */
 typedef struct __attribute__((packed)) {
     uint8_t  type;      /* cadran_widget_type_t */
@@ -62,6 +71,15 @@ typedef enum {
     CADRAN_WIDGET_RECT       = 6,
     CADRAN_WIDGET_LINE       = 7,
 } cadran_widget_type_t;
+
+/* TEXT widget's params[0] - see the params table above. Ordered
+ * smallest-first so 0 is a safe default for anything that never sets
+ * this field. */
+typedef enum {
+    CADRAN_FONT_SMALL  = 0,
+    CADRAN_FONT_MEDIUM = 1,
+    CADRAN_FONT_LARGE  = 2,
+} cadran_font_role_t;
 
 /* "Always available" providers per design doc §5, plus the caps-gated
  * step pair (STEP_COUNT/STEP_TARGET) - hr/stress remain reserved,

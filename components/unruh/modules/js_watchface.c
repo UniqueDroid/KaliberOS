@@ -112,6 +112,17 @@ static const provider_map_t PROVIDERS[] = {
 /* "app.0".."app.7" -> CADRAN_PROVIDER_APP_0+N, per design doc §5 - not
  * writable by anything yet (no hybrid-face JS API), but the name mapping
  * costs nothing to support now. */
+/* TEXT widget's "font" field (design doc §5a) - a role name, never a
+ * pixel size. Absent/unrecognized defaults to "small" (get_str_enum()'s
+ * own def param below), same zero-value-default reasoning as
+ * CADRAN_FONT_SMALL == 0 in face_format.h. */
+typedef struct { const char *name; cadran_font_role_t role; } font_role_map_t;
+static const font_role_map_t FONT_ROLES[] = {
+    {"small",  CADRAN_FONT_SMALL},
+    {"medium", CADRAN_FONT_MEDIUM},
+    {"large",  CADRAN_FONT_LARGE},
+};
+
 static bool resolve_provider(const char *name, cadran_provider_id_t *out) {
     if (!name) return false;
     for (size_t i = 0; i < sizeof PROVIDERS / sizeof PROVIDERS[0]; i++) {
@@ -264,9 +275,22 @@ static esp_err_t serialize(JSContext *ctx, JSValueConst tree, const board_desc_t
             break;
         }
         case CADRAN_WIDGET_TEXT: {
-            int32_t scale;
-            get_int(ctx, w, "scale", &scale, 0);
-            rec.params[0] = (int16_t)scale;
+            cadran_font_role_t role = CADRAN_FONT_SMALL;
+            JSValue font_v = JS_GetPropertyStr(ctx, w, "font");
+            if (!JS_IsUndefined(font_v)) {
+                const char *font_s = JS_ToCString(ctx, font_v);
+                if (font_s) {
+                    for (size_t fi = 0; fi < sizeof FONT_ROLES / sizeof FONT_ROLES[0]; fi++) {
+                        if (strcmp(FONT_ROLES[fi].name, font_s) == 0) {
+                            role = FONT_ROLES[fi].role;
+                            break;
+                        }
+                    }
+                }
+                JS_FreeCString(ctx, font_s);
+            }
+            JS_FreeValue(ctx, font_v);
+            rec.params[0] = (int16_t)role;
             JSValue fmt_v = JS_GetPropertyStr(ctx, w, "format");
             const char *fmt_s = JS_ToCString(ctx, fmt_v);
             if (fmt_s) {

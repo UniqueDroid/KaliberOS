@@ -2,7 +2,7 @@
 #include "gfx_font8x8.h"
 #include "gfx_font16x16.h"
 #include "gfx_font32x32.h"
-#include "gfx_font96x96.h"
+#include "gfx_font64x96.h"
 
 #define FONT_FIRST 0x20
 #define FONT_LAST  0x7e
@@ -20,9 +20,9 @@ const gfx_font_t gfx_font_32 = {
     .row_bytes = FONT32X32_ROW_BYTES, .first = 0x20, .last = 0x7e,
 };
 const gfx_font_t gfx_font_time_large = {
-    .data = font96x96, .width = FONT96X96_W, .height = FONT96X96_H,
-    .row_bytes = FONT96X96_ROW_BYTES,
-    .first = FONT96X96_FIRST, .last = FONT96X96_LAST,
+    .data = font64x96, .width = FONT64X96_W, .height = FONT64X96_H,
+    .row_bytes = FONT64X96_ROW_BYTES,
+    .first = FONT64X96_FIRST, .last = FONT64X96_LAST,
 };
 
 /* Same fb-write logic as cadran/render.c's private set_px (E-ink: clearing

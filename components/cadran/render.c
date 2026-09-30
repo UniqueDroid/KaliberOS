@@ -77,13 +77,56 @@ static void draw_hand(const gfx_ctx_t *ctx, const cadran_widget_rec_t *w,
     draw_line(ctx, w->x, w->y, x1, y1);
 }
 
+/* Font-role resolution (design doc §5a): a TEXT widget names a role
+ * (small/medium/large), never a concrete font - the renderer picks the
+ * largest font registered for that role which both (a) covers every
+ * character in the actual string to draw (gfx_font_time_large is
+ * digits+colon only - unusable for "12%" or "steps", not just a bad
+ * fit) and (b) fits this board's own disp_w at that font's native
+ * width. Falls through to the next-smaller candidate otherwise, same
+ * "skip/degrade, don't error" rule as an unavailable provider - the
+ * last entry in every tier list is gfx_font_16, full ASCII, always
+ * registered, so this never comes up empty. */
+static bool font_covers(const gfx_font_t *f, const char *s) {
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+        if (*p < f->first || *p > f->last) return false;
+    return true;
+}
+
+static const gfx_font_t *resolve_font(const board_desc_t *b, int role, const char *s) {
+    static const gfx_font_t *const tiers[3][3] = {
+        /* CADRAN_FONT_SMALL  */ { &gfx_font_16, NULL, NULL },
+        /* CADRAN_FONT_MEDIUM */ { &gfx_font_32, &gfx_font_16, NULL },
+        /* CADRAN_FONT_LARGE  */ { &gfx_font_time_large, &gfx_font_32, &gfx_font_16 },
+    };
+    if (role < 0 || role > 2) role = 0; /* out-of-range params[0] (e.g. a
+                                          * pre-role face still carrying an
+                                          * old scale value) degrades to
+                                          * SMALL, not undefined behavior */
+    /* Same margin ratio as launcher.c's screen_margin() - not shared code,
+     * matching how gfx/text.c's set_px() and cadran/render.c's own
+     * draw_pixel() already each keep their own copy rather than a cross-
+     * component dependency for a two-line calculation. */
+    int margin = b->caps.disp_w / 40;
+    if (margin < 4) margin = 4;
+    int avail = b->caps.disp_w - 2 * margin;
+
+    for (int i = 0; i < 3 && tiers[role][i]; i++) {
+        const gfx_font_t *f = tiers[role][i];
+        if (!font_covers(f, s)) continue;
+        if ((int)strlen(s) * f->width <= avail) return f;
+    }
+    return &gfx_font_16; /* floor: full ASCII, always covers s - may still
+                           * overflow disp_w for a very long string, same
+                           * as every widget position before this existed
+                           * (no line-wrapping anywhere in Cadran yet). */
+}
+
 /* TEXT widget: str_ref is a format string (design doc §4, "built-in
  * bitmap font + format string with {v}"); the first "{v}" is replaced
  * with the bound provider's value (string as-is, i32 via snprintf). No
  * bind_id (have_val false) leaves the format string as-is, literal - a
- * text widget doesn't have to be bound to anything. params[0], if
- * nonzero, is the gfx scale factor; the design doc's own widget example
- * doesn't set one, so 0/unset defaults to scale 1. */
+ * text widget doesn't have to be bound to anything. */
 static void draw_text(const gfx_ctx_t *ctx, const cadran_widget_rec_t *w,
                        const char *fmt, bool have_val, const cadran_value_t *val) {
     if (!fmt) return;
@@ -102,8 +145,8 @@ static void draw_text(const gfx_ctx_t *ctx, const cadran_widget_rec_t *w,
         strncpy(out, fmt, sizeof out - 1);
         out[sizeof out - 1] = '\0';
     }
-    int scale = w->params[0] > 0 ? w->params[0] : 1;
-    gfx_draw_text(ctx, w->x, w->y, out, scale);
+    const gfx_font_t *font = resolve_font(ctx->board, w->params[0], out);
+    gfx_draw_text_font(ctx, w->x, w->y, out, 1, font);
 }
 
 /* ------------------------------------------------------------- render */

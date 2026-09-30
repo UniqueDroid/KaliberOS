@@ -14,25 +14,32 @@
  * called with, not a second set of hardcoded numbers per board; that's
  * the whole point of build() receiving ctx at all, design doc §3).
  *
- * time.hm is always "HH:MM" (providers.c), 5 chars fixed-width at
- * scale 4 (32px/glyph = 160x32px total) - a fixed scale, not yet
- * relative to ctx.w/ctx.h itself (scale 6, examples/watchfaces/simple/
- * face.js's own value, would already overflow watchy_v3's 200px width
- * at 5*48=240px; scaling *up* for the C6's larger panel is a real next
- * step, just a separate one from centering).
+ * font: "large" (project chat 2026-09-30, design doc §5a) - a role, not
+ * a pixel size or upscale factor: render.c resolves it per board/tick
+ * to the biggest registered font that both covers every character in
+ * "HH:MM" and fits this panel's own width, falling back toward "small"
+ * if the ideal size doesn't fit (as it won't on watchy_v3's 200px panel
+ * - the same face.bin renders correctly smaller there, no per-board
+ * branch here). charW below is only a *centering estimate*, not the
+ * real glyph width (that's resolved in C, after this runs) - scaled by
+ * ctx.w so it tracks whichever font C is actually going to pick closely
+ * enough (roughly 64px/char on the C6, 32px/char on watchy_v3, both
+ * real registered sizes) without build() needing to duplicate render.c's
+ * own fallback logic. A few pixels of centering error either way is the
+ * accepted trade-off already documented on the dashboard face.
  */
 WatchFace({
   build: function (ctx) {
-    var scale = 4;
-    var w = 5 * 8 * scale;  /* "HH:MM", 8px/glyph before scaling */
-    var h = 8 * scale;
+    var charW = Math.floor(ctx.w / 6);
+    var w = 5 * charW;             /* "HH:MM" */
+    var h = Math.floor(charW * 1.5); /* rough cell aspect, centering only */
     return {
       widgets: [
         {
           type: "text",
           x: Math.floor((ctx.w - w) / 2),
           y: Math.floor((ctx.h - h) / 2),
-          bind: "time.hm", format: "{v}", scale: scale
+          bind: "time.hm", format: "{v}", font: "large"
         }
       ]
     };
