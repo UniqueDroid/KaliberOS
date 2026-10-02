@@ -47,6 +47,13 @@ typedef struct {
  */
 void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scale);
 
+/* One-pixel-tall horizontal rule from x0 to x1 (inclusive, either order),
+ * same clipping as everything else here. Used by gfx/native_screens.c's
+ * headline/body divider - a placeholder visual, not the real design
+ * system (Phase 4, see docs/design/base-system.md's roadmap), but a
+ * real pixel line rather than a run of font glyphs standing in for one. */
+void gfx_draw_hline(const gfx_ctx_t *ctx, int x0, int x1, int y);
+
 /**
  * A second bitmap font, rasterized at its own native resolution instead
  * of integer-upscaled from the 8x8 one (project chat 2026-09-30:

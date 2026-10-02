@@ -51,6 +51,12 @@ static inline void set_px(const gfx_ctx_t *ctx, int x, int y) {
     }
 }
 
+void gfx_draw_hline(const gfx_ctx_t *ctx, int x0, int x1, int y) {
+    if (!ctx || !ctx->fb || !ctx->board) return;
+    if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
+    for (int x = x0; x <= x1; x++) set_px(ctx, x, y);
+}
+
 void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scale) {
     if (!ctx || !ctx->fb || !ctx->board || !str) return;
     if (scale < 1) scale = 1;
