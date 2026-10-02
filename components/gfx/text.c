@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "gfx/text.h"
 #include "gfx_font8x8.h"
 #include "gfx_font16x16.h"
@@ -55,6 +56,20 @@ void gfx_draw_hline(const gfx_ctx_t *ctx, int x0, int x1, int y) {
     if (!ctx || !ctx->fb || !ctx->board) return;
     if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
     for (int x = x0; x <= x1; x++) set_px(ctx, x, y);
+}
+
+void gfx_draw_line(const gfx_ctx_t *ctx, int x0, int y0, int x1, int y1) {
+    if (!ctx || !ctx->fb || !ctx->board) return;
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        set_px(ctx, x0, y0);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
 }
 
 void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scale) {

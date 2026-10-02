@@ -54,6 +54,17 @@ void gfx_draw_text(const gfx_ctx_t *ctx, int x, int y, const char *str, int scal
  * real pixel line rather than a run of font glyphs standing in for one. */
 void gfx_draw_hline(const gfx_ctx_t *ctx, int x0, int x1, int y);
 
+/* General line (Bresenham), any direction - gfx_draw_hline() stays as
+ * the cheap special case for the common one. Added 2026-10-02 for the
+ * display-path diagnostic (main.c's display_path_selftest()): a border/
+ * diagonal/grid test pattern that deliberately bypasses Cadran and the
+ * native screens, so a mismatch between the host-rendered PNG and a
+ * device photo of this can only be the display driver's transfer path
+ * (board_hal/boards/.../board.c), not gfx/Cadran - both already
+ * host-verified extensively by that point. Same clipping as everything
+ * else in gfx. */
+void gfx_draw_line(const gfx_ctx_t *ctx, int x0, int y0, int x1, int y1);
+
 /**
  * A second bitmap font, rasterized at its own native resolution instead
  * of integer-upscaled from the 8x8 one (project chat 2026-09-30:

@@ -38,6 +38,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
@@ -55,6 +56,7 @@
 static const char *TAG = "board.waveshare_c6_amoled";
 static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t s_panel;
+static SemaphoreHandle_t s_color_trans_done;
 
 /* ---------------------------------------------------------------- display */
 
@@ -78,14 +80,43 @@ static const sh8601_lcd_init_cmd_t s_init_cmds[] = {
     {0x51, (uint8_t[]){0xFF}, 1, 0},
 };
 
+/* esp_lcd_panel_io_tx_color() (called by esp_lcd_panel_draw_bitmap() -
+ * see waveshare/esp_lcd_sh8601's panel_sh8601_draw_bitmap(), which does
+ * NOT wait for it and does not even propagate its return code) is
+ * asynchronous by design - ESP-IDF's own esp_lcd_types.h is explicit
+ * about it: "Recycling of color buffer should be done in the callback
+ * `on_color_trans_done()`". Nothing in this board.c (nor anywhere it's
+ * called from, launcher.c/net_svc.c's stripe loops) ever waited for
+ * that - every blit_region() call returned the instant the SPI
+ * transaction was QUEUED, and the caller immediately memset()+redrew
+ * the SAME framebuffer for the next stripe while the DMA engine could
+ * still be reading the previous stripe's data out of it (project chat
+ * 2026-10-02: exactly matches the symptom - bold/early-drawn content
+ * surviving, thinner/later content missing from real device photos
+ * while the host renderer, which never touches real SPI/DMA timing,
+ * draws the identical pattern correctly). Fixed by giving this
+ * semaphore from the completion callback and waiting on it below,
+ * making blit_region() synchronous again - the contract every caller
+ * already assumed (watchy_v3's hand-rolled blocking SPI transfers give
+ * it for free; this QSPI driver needs it wired up explicitly). */
+static bool color_trans_done_cb(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx) {
+    (void)io; (void)edata; (void)user_ctx;
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_color_trans_done, &woken);
+    return woken == pdTRUE;
+}
+
 static esp_err_t disp_init(void) {
+    s_color_trans_done = xSemaphoreCreateBinary();
+    if (!s_color_trans_done) return ESP_ERR_NO_MEM;
+
     const spi_bus_config_t buscfg = SH8601_PANEL_BUS_QSPI_CONFIG(
         PIN_LCD_SCLK, PIN_LCD_DATA0, PIN_LCD_DATA1, PIN_LCD_DATA2, PIN_LCD_DATA3,
         DISP_W * 32 * 2 /* one stripe's worth, see caps.stripe_lines below */);
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     const esp_lcd_panel_io_spi_config_t io_config =
-        SH8601_PANEL_IO_QSPI_CONFIG(PIN_LCD_CS, NULL, NULL);
+        SH8601_PANEL_IO_QSPI_CONFIG(PIN_LCD_CS, color_trans_done_cb, NULL);
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &s_io));
 
     sh8601_vendor_config_t vendor_config = {
@@ -115,7 +146,26 @@ static esp_err_t disp_init(void) {
  * ESP-IDF esp_lcd convention), unlike watchy_v3's inclusive SSD1681
  * RAM-window registers. */
 static esp_err_t disp_blit_region(int x, int y, int w, int h, const uint8_t *buf) {
-    return esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, buf);
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, buf);
+    if (err != ESP_OK) {
+        /* panel_sh8601_draw_bitmap() doesn't actually propagate tx_color()'s
+         * result today (vendor bug, managed_components/waveshare__esp_lcd_
+         * sh8601/esp_lcd_sh8601.c - fixed upstream, not here, see
+         * disp_init()'s comment on color_trans_done_cb()) - this check is
+         * cheap insurance for whenever that's fixed or a different vendor
+         * version is pulled in, not currently expected to fire. */
+        ESP_LOGE(TAG, "draw_bitmap(x=%d y=%d w=%d h=%d, %d B) failed: %s",
+                 x, y, w, h, w * h * 2, esp_err_to_name(err));
+        return err;
+    }
+    /* Block until color_trans_done_cb() fires - see its own comment. 1s
+     * is generous (a 26240 B stripe at 40 MHz QSPI is ~5 ms); a real
+     * timeout here means the transfer actually hung, worth knowing. */
+    if (xSemaphoreTake(s_color_trans_done, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "draw_bitmap(x=%d y=%d w=%d h=%d): color_trans_done timed out", x, y, w, h);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
 }
 
 /* AMOLED, not e-ink: no full-vs-partial refresh distinction to make here

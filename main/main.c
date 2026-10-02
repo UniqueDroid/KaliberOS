@@ -20,6 +20,7 @@
 #include "core/app_store.h"
 #include "launcher/launcher.h"
 #include "cadran/cadran.h"
+#include "gfx/text.h"
 
 static const char *TAG = "kaliber";
 
@@ -36,6 +37,76 @@ extern void kb_store_install_default_face(void);
  * style nitpick. Run it on its own task, sized to match, and block until
  * done so it can't race the launcher's own engine for heap. */
 static SemaphoreHandle_t s_wf_selftest_done;
+
+/* Bring-up diagnostic (project chat 2026-10-02, Simon via Jan): isolates
+ * the display transfer path from everything else - Cadran, native
+ * screens, fonts - all already host-verified extensively (tools/
+ * host_render) to draw this exact pattern correctly. A raw border at
+ * the panel edges, one corner-to-corner diagonal, and a grid whose
+ * horizontal lines sit exactly on this board's stripe boundaries (so a
+ * missing/corrupt line points straight at which stripe stopped working).
+ * Host-render the identical shapes and compare against a photo of this:
+ * if the host PNG's border is flush with the panel edge and every grid
+ * line is intact but the photo isn't, the bug is in board_hal/boards/
+ * .../board.c's transfer path, not gfx/Cadran.
+ *
+ * Also exercises the exact fix applied alongside this (color_trans_done_
+ * cb()/s_color_trans_done in waveshare_c6_amoled/board.c - blit_region()
+ * used to return the instant the SPI color transfer was QUEUED, not when
+ * it actually finished, so this loop's own memset()+redraw of the next
+ * stripe could race the DMA engine still reading the previous one out of
+ * the same buffer - exactly the "bold/early content survives, thin/later
+ * content vanishes" shape the first round of real photos showed).
+ *
+ * Held on screen for KB_DISPLAY_PATH_SELFTEST_MS so there's time to
+ * photograph it. Confirmed 2026-10-02 (Jan, real C6 photos): border
+ * flush with the panel edge, diagonal unbroken, grid intact, and -
+ * decisively - MENU's three body lines and the watchface's "??:??"
+ * placeholder both render completely for the first time, where they
+ * used to show fragments/a single giant character. Off by default now
+ * (KB_DISPLAY_PATH_SELFTEST_ENABLE 0) rather than deleted - same
+ * bring-up-tool-stays-in-the-tree convention as cadran_selftest()/
+ * js_watchface_selftest() below, flip to 1 if the display path is ever
+ * under suspicion again (ESP32-C6 QSPI DMA race is now fixed, not a
+ * guarantee no related bug exists). */
+#define KB_DISPLAY_PATH_SELFTEST_ENABLE 0
+#if KB_DISPLAY_PATH_SELFTEST_ENABLE
+#define KB_DISPLAY_PATH_SELFTEST_MS 4000
+static void display_path_selftest(void) {
+    const board_desc_t *b = board_get();
+    uint8_t *fb = malloc(board_fb_size());
+    if (!fb) { ESP_LOGE(TAG, "display_path_selftest: no mem"); return; }
+
+    uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
+    if (b->display->begin_frame) b->display->begin_frame();
+    for (int y = 0; y < b->caps.disp_h; y += stripe) {
+        int h = stripe;
+        if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
+        gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = y, .height = h };
+        memset(fb, 0xFF, board_fb_size());
+
+        int w = b->caps.disp_w, ph = b->caps.disp_h;
+        /* border exactly at the panel edges */
+        gfx_draw_hline(&ctx, 0, w - 1, 0);
+        gfx_draw_hline(&ctx, 0, w - 1, ph - 1);
+        gfx_draw_line(&ctx, 0, 0, 0, ph - 1);
+        gfx_draw_line(&ctx, w - 1, 0, w - 1, ph - 1);
+        /* one corner-to-corner diagonal */
+        gfx_draw_line(&ctx, 0, 0, w - 1, ph - 1);
+        /* grid: horizontal at every stripe boundary, vertical every 50px */
+        for (int gy = 0; gy < ph; gy += stripe) gfx_draw_hline(&ctx, 0, w - 1, gy);
+        for (int gx = 0; gx < w; gx += 50) gfx_draw_line(&ctx, gx, 0, gx, ph - 1);
+
+        esp_err_t err = b->display->blit_region(0, y, b->caps.disp_w, h, fb);
+        ESP_LOGI(TAG, "display_path_selftest: stripe y=%d h=%d blit_region=%s",
+                 y, h, esp_err_to_name(err));
+    }
+    if (b->display->end_frame) b->display->end_frame(true);
+    free(fb);
+
+    vTaskDelay(pdMS_TO_TICKS(KB_DISPLAY_PATH_SELFTEST_MS));
+}
+#endif /* KB_DISPLAY_PATH_SELFTEST_ENABLE */
 
 static void watchface_selftest_task(void *arg) {
     (void)arg;
@@ -67,6 +138,10 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(b->power->init());
     ESP_ERROR_CHECK(b->display->init());
+
+#if KB_DISPLAY_PATH_SELFTEST_ENABLE
+    display_path_selftest();
+#endif
 
     /* Bring-up only: proves the Cadran loader/renderer/provider round-trip
      * on real hardware. Remove once cadran_render() is wired into the

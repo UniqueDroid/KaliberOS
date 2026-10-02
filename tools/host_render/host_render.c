@@ -222,6 +222,39 @@ static void render_font_glyph_sheet(const board_desc_t *b, const char *tag) {
     free(fb);
 }
 
+/* Reference image for main.c's display_path_selftest() - identical shapes
+ * (border at the panel edges, one diagonal, a grid with horizontal lines
+ * at every stripe boundary), rendered here instead of on real hardware so
+ * a device photo of the same pattern can be compared against a known-
+ * correct baseline (project chat 2026-10-02 - isolates gfx's own line
+ * drawing, already exercised elsewhere in this file, from the display
+ * driver's transfer path, which only the real device can test). */
+static void render_display_path_test(const board_desc_t *b, const char *tag) {
+    uint8_t *fb = malloc(fb_bytes(b));
+    clear_white(fb, b);
+    gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = 0, .height = b->caps.disp_h };
+    int w = b->caps.disp_w, h = b->caps.disp_h;
+    /* The real waveshare_c6_amoled board.c sets stripe_lines=32 - hardcoded
+     * here rather than read from b->caps.stripe_lines, since the host
+     * boards above use 0 (whole-panel, no stripe loop needed for every
+     * other test in this file) and this specific grid only means anything
+     * against the real device's actual stripe boundaries. */
+    uint16_t stripe = 32;
+
+    gfx_draw_hline(&ctx, 0, w - 1, 0);
+    gfx_draw_hline(&ctx, 0, w - 1, h - 1);
+    gfx_draw_line(&ctx, 0, 0, 0, h - 1);
+    gfx_draw_line(&ctx, w - 1, 0, w - 1, h - 1);
+    gfx_draw_line(&ctx, 0, 0, w - 1, h - 1);
+    for (int gy = 0; gy < h; gy += stripe) gfx_draw_hline(&ctx, 0, w - 1, gy);
+    for (int gx = 0; gx < w; gx += 50) gfx_draw_line(&ctx, gx, 0, gx, h - 1);
+
+    char name[128];
+    snprintf(name, sizeof name, "%s_display_path_test.png", tag);
+    save_png(name, fb, b);
+    free(fb);
+}
+
 int main(void) {
     time_t now = time(NULL);
     printf("host_render: build_time~=%ld (TIME_HM provider uses the real system clock)\n", (long)now);
@@ -231,6 +264,7 @@ int main(void) {
     render_native_screens(&s_board_c6, "c6_410x502");
     render_native_screens(&s_board_watchy, "watchy_200x200");
     render_font_glyph_sheet(&s_board_sheet, "glyphsheet");
+    render_display_path_test(&s_board_c6, "c6_410x502");
 
     return 0;
 }
