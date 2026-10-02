@@ -44,6 +44,7 @@
 #include "unruh/engine.h"
 #include "launcher/launcher.h"
 #include "gfx/text.h"
+#include "gfx/native_screens.h"
 #include "net_svc/net_svc.h"
 #include "cadran/cadran.h"
 
@@ -252,58 +253,22 @@ static void teardown_engine_if_running(void) {
  * how net_svc.c's draw_sync_screen() already does its own - the content
  * differs enough (and the loop is short enough) that sharing would cost
  * more in indirection than it saves. */
-/* Native-screen layout, relative to this board's own panel (project
- * chat 2026-09-07: found live, these screens still assumed watchy_v3's
- * 200×200 - "stuck top-left" on the C6's 410×502, a hardcoded-pixel bug
- * of exactly the kind the default/dashboard faces already fixed for
- * themselves back in the Cadran work). Not the real design system
- * (smartwatch-system/, Phase 4) - proportional margin/line-spacing
- * only, same 8x8 bitmap font and scale-based sizing every screen here
- * already used, just no longer pinned to one board's pixel count. */
-static int screen_margin(const board_desc_t *b) {
-    int m = b->caps.disp_w / 40; /* ~2.5%, smartwatch-system/'s own margin ratio is close (24/390) */
-    return m < 4 ? 4 : m;
-}
-static int screen_headline_y(const board_desc_t *b) {
-    int y = b->caps.disp_h / 12;
-    return y < 10 ? 10 : y;
-}
-static int screen_line_gap(const board_desc_t *b) {
-    int g = b->caps.disp_h / 30;
-    return g < 15 ? 15 : g;
-}
-
-/* Headline font pick (project chat 2026-09-30, Simon: the 8x8 font
- * integer-upscaled "ergibt Klötze" - the actual reason Jan couldn't judge
- * the last redesign). tools/fontgen/gen_bitmap_font.py's gfx_font_16/
- * gfx_font_32 are rasterized natively at each size, no upscaling blur/
- * blockiness - but their fixed native width means a long headline can
- * overflow a narrow panel (watchy_v3, 200px) at the bigger size where it
- * wouldn't on the C6's 410px one. Pick the biggest of the two that still
- * fits this board's own width for this specific string, rather than a
- * per-board special case - generic over disp_w like every other layout
- * helper here. */
-static const gfx_font_t *headline_font(const board_desc_t *b, const char *str, int margin) {
-    int avail = b->caps.disp_w - 2 * margin;
-    int w32 = (int)strlen(str) * gfx_font_32.width;
-    return (w32 <= avail) ? &gfx_font_32 : &gfx_font_16;
-}
-
+/* Native-screen layout/content lives in gfx/native_screens.c now (2026-
+ * 10-02) - shared with net_svc.c and host-testable (tools/host_render),
+ * see that file's own header comment. This function keeps the parts that
+ * stay launcher-owned: fb lifetime, the stripe loop, and the hardware
+ * blit/begin_frame/end_frame calls. */
 static void draw_no_apps_screen(void) {
     const board_desc_t *b = board_get();
     ESP_LOGW(TAG, "no complications installed");
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
-    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text_font(&ctx, margin, y0, "NO APPS", 1, headline_font(b, "NO APPS", margin));
-        /* Full instructions belong in the README, not squeezed onto the
-         * panel - this is a pointer, not a manual. */
-        gfx_draw_text(&ctx, margin, y0 + gap * 3, "atelier push", 2);
+        gfx_screens_draw_no_apps(&ctx);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -318,17 +283,13 @@ static void draw_no_apps_screen(void) {
 static void draw_menu_placeholder(void) {
     const board_desc_t *b = board_get();
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
-    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text_font(&ctx, margin, y0, "MENU", 1, headline_font(b, "MENU", margin));
-        gfx_draw_text(&ctx, margin, y0 + gap * 3, "SELECT: open", 1);
-        gfx_draw_text(&ctx, margin, y0 + gap * 4, "BACK:   watchface", 1);
-        gfx_draw_text(&ctx, margin, y0 + gap * 5, "DOWN:   install", 1);
+        gfx_screens_draw_menu(&ctx);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -355,15 +316,13 @@ static void draw_wake_check_screen(const char *msg) {
     const board_desc_t *b = board_get();
     ESP_LOGI(TAG, "wake-check: %s", msg);
     uint16_t stripe = b->caps.stripe_lines ? b->caps.stripe_lines : b->caps.disp_h;
-    int margin = screen_margin(b), y0 = screen_headline_y(b), gap = screen_line_gap(b);
     if (b->display->begin_frame) b->display->begin_frame();
     for (int y = 0; y < b->caps.disp_h; y += stripe) {
         int h = stripe;
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = L.fb, .board = b, .origin_y = y, .height = h };
         memset(L.fb, 0xFF, board_fb_size());
-        gfx_draw_text_font(&ctx, margin, y0, "WAKE CHECK", 1, headline_font(b, "WAKE CHECK", margin));
-        gfx_draw_text(&ctx, margin, y0 + gap * 2, msg, 1);
+        gfx_screens_draw_wake_check(&ctx, msg);
         b->display->blit_region(0, y, b->caps.disp_w, h, L.fb);
     }
     b->display->end_frame(true);
@@ -478,12 +437,7 @@ static void app_render_if_dirty(void) {
          * - once a real watchface is installed this is meant to look
          * like a normal watchface, not a debug build. */
         if (L.state == KB_LSTATE_APP) {
-            char label[80]; /* generous: GCC's format-truncation check assumes
-                              * L.app_id (declared KB_APP_ID_MAX=64) could be
-                              * fully used, "APP: " + 64 + NUL needs more than
-                              * a tighter buffer here. */
-            snprintf(label, sizeof label, "APP: %s", L.app_id);
-            gfx_draw_text(&ctx, 10, 190, label, 1);
+            gfx_screens_draw_app_label(&ctx, L.app_id);
         }
         if (jw_ui_take_dirty()) {
             any_dirty = true;

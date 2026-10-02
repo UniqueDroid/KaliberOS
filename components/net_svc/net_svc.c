@@ -21,6 +21,7 @@
 #include "nvs.h"
 #include "board_hal/board.h"
 #include "gfx/text.h"
+#include "gfx/native_screens.h"
 #include "core/app_store.h"
 #include "net_svc/net_svc.h"
 
@@ -84,32 +85,14 @@ static bool ap_password(char out[65]) {
  * "C path" idea as cadran_selftest(). Heap-allocated (board_fb_size() is
  * a few KB, well past what belongs on any task stack in this project -
  * see README's "big buffers on the heap" convention). */
-/* Relative to this board's own panel, not pinned to watchy_v3's 200px
- * (project chat 2026-09-07 - found live, same "stuck top-left" bug
- * launcher.c's own native screens had, same fix shape: proportional
- * margin/spacing, not the real design system, Phase 4). */
-static int screen_margin(const board_desc_t *b) {
-    int m = b->caps.disp_w / 40;
-    return m < 4 ? 4 : m;
-}
-static int screen_line_gap(const board_desc_t *b) {
-    int g = b->caps.disp_h / 30;
-    return g < 15 ? 15 : g;
-}
-
+/* Layout/content moved to gfx/native_screens.c (2026-10-02) - shared
+ * with launcher.c, host-testable (tools/host_render). This function
+ * keeps what stays net_svc-owned: fb lifetime, the stripe loop, and the
+ * hardware blit/begin_frame/end_frame calls. */
 static void draw_sync_screen(const char *ssid, const char *pass, const char *ip, const char *key) {
     const board_desc_t *b = board_get();
     uint8_t *fb = malloc(board_fb_size());
     if (!fb) return;
-    char line[80]; /* generous: GCC's format-truncation check assumes pass[]
-                     * (declared 65) could be fully used, "PASS: " + 64 + NUL
-                     * already exceeds a tighter buffer here. */
-    int margin = screen_margin(b), gap = screen_line_gap(b);
-    int y0 = margin; /* headline at the same margin used horizontally, not
-                       * a separate ratio - this screen's own original
-                       * layout already started near the top, unlike the
-                       * launcher's screens which push the headline down
-                       * a bit; kept that same shape, just relative now. */
 
     /* Fixed content at panel-absolute coordinates, drawn fresh per
      * stripe (docs/design/display-regions.md) - stripe=disp_h on
@@ -122,37 +105,7 @@ static void draw_sync_screen(const char *ssid, const char *pass, const char *ip,
         if (y + h > b->caps.disp_h) h = b->caps.disp_h - y;
         gfx_ctx_t ctx = { .fb = fb, .board = b, .origin_y = y, .height = h };
         memset(fb, 0xFF, board_fb_size()); /* white, matches jw_ui clear() */
-
-        /* Headline big (docs/design/native-screens.md's hierarchy rule),
-         * detail lines small - SSID/pass/IP don't reliably fit scale 2
-         * without wrapping on the smaller of the two boards' panels
-         * (ssid alone is up to ~14 chars, 224px at scale 2), and this is
-         * exactly the block someone's squinting at to type into a
-         * phone, so unwrapped and legible-at-scale-1 beats
-         * bigger-but-truncated. "POST /install" dropped - that's the
-         * README's job, not the panel's (see its "Building and pushing"
-         * section). */
-        gfx_draw_text(&ctx, margin, y0, "SYNC", 3);
-        snprintf(line, sizeof line, "SSID: %s", ssid);
-        gfx_draw_text(&ctx, margin, y0 + gap * 3, line, 1);
-        snprintf(line, sizeof line, "PASS: %s", pass);
-        gfx_draw_text(&ctx, margin, y0 + gap * 4, line, 1);
-        snprintf(line, sizeof line, "IP:   %s:8080", ip);
-        gfx_draw_text(&ctx, margin, y0 + gap * 5, line, 1);
-        /* docs/design/package-signing.md's pairing flow: this key is
-         * "atelier push --key ..." for a device atelier hasn't seen
-         * before - the regular way to learn one, not a debug value.
-         * 64 hex chars doesn't fit one line even at scale 1 on the
-         * smaller (200px) panel - wrapped 16 chars/line (128px), 4
-         * lines, same width budget every other line here already
-         * respects. */
-        char keybuf[65];
-        strlcpy(keybuf, key, sizeof keybuf);
-        for (int ki = 0; ki < 4; ki++) {
-            snprintf(line, sizeof line, "%s%.16s", ki == 0 ? "KEY:  " : "      ", keybuf + ki * 16);
-            gfx_draw_text(&ctx, margin, y0 + gap * (7 + ki), line, 1);
-        }
-
+        gfx_screens_draw_sync(&ctx, ssid, pass, ip, key);
         b->display->blit_region(0, y, b->caps.disp_w, h, fb);
     }
     b->display->end_frame(true);

@@ -13,3 +13,6 @@ __pycache__/
 *.comp
 *.qjb
 *.mqb
+
+# tools/host_render build output (binary + generated PNGs)
+tools/host_render/out/

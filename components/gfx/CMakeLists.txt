@@ -2,7 +2,7 @@
 # adopt this later without pulling in an engine dependency (see components/
 # cadran/CMakeLists.txt, same rationale).
 idf_component_register(
-    SRCS "text.c"
+    SRCS "text.c" "native_screens.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES board_hal
