@@ -390,6 +390,24 @@ static void button_poll_task(void *arg) {
     }
 }
 
+/* Shared by input_init() (FT3168 touch) and power_init() (AXP2101 PMIC,
+ * below) - same physical I2C bus (pins.h's PIN_I2C_SDA/SCL). power_init()
+ * runs before input_init() (main.c's app_main() order: power->init()
+ * well before input->init()), so whichever runs first creates the bus;
+ * the other just adds its own device to it. */
+static esp_err_t ensure_i2c_bus(void) {
+    if (s_i2c_bus) return ESP_OK;
+    const i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = PIN_I2C_SDA,
+        .scl_io_num = PIN_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    return i2c_new_master_bus(&bus_cfg, &s_i2c_bus);
+}
+
 static esp_err_t input_init(void) {
     const gpio_config_t boot_cfg = {
         .pin_bit_mask = 1ULL << PIN_BTN_BOOT,
@@ -426,15 +444,7 @@ static esp_err_t input_init(void) {
     gpio_set_level(PIN_TOUCH_RESET, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    const i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = I2C_NUM_0,
-        .sda_io_num = PIN_I2C_SDA,
-        .scl_io_num = PIN_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_i2c_bus);
+    esp_err_t err = ensure_i2c_bus();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "touch: i2c bus init failed: %s", esp_err_to_name(err));
         return ESP_OK; /* Real gap, not fatal - board still boots/displays without touch. */
@@ -491,11 +501,60 @@ static const input_ops_t input_ops = {
 /* ------------------------------------------------------------------ power */
 
 /* AXP2101 PMIC (I2C, pins.h's PIN_I2C_SDA/SCL - shared with touch) owns
- * battery percentage and USB/charge detection on real hardware. Not
- * wired up yet (this milestone is display + boot only) - every function
- * below is a placeholder, not a measurement, flagged as such rather than
- * silently returning a plausible-looking fake number. */
-static esp_err_t power_init(void) { return ESP_OK; }
+ * battery percentage and charge detection on real hardware. Register
+ * addresses/bits taken from ~/Projekte/esp-watchos's battery_shared.c
+ * (Jan's own, hardware-verified on the exact same Waveshare board model -
+ * same "borrow hardware facts, not architecture" rule this file already
+ * used for the FT3168/button pins, see the header comment above) -
+ * cross-checked there against the public AXP2101 register map, not
+ * re-derived from scratch here. Only the four registers that project
+ * actually uses are read; nothing else on this very large PMIC is
+ * touched. */
+#define AXP2101_I2C_ADDR 0x34
+#define AXP2101_REG_CHIP_ID 0x03
+#define AXP2101_CHIP_ID 0x4A
+#define AXP2101_REG_PMU_STATUS_2 0x01
+#define AXP2101_REG_BATT_PERCENT 0xA4
+#define AXP2101_STATUS2_CHARGED_BIT (1u << 3)
+#define AXP2101_STATUS2_CHARGING_BIT (1u << 2)
+
+static i2c_master_dev_handle_t s_axp_dev;
+static bool s_axp_ready;
+
+static bool axp2101_read_reg(uint8_t reg, uint8_t *out) {
+    return i2c_master_transmit_receive(s_axp_dev, &reg, 1, out, 1, 1000) == ESP_OK;
+}
+
+static esp_err_t power_init(void) {
+    esp_err_t err = ensure_i2c_bus();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "power: i2c bus init failed: %s - battery reporting disabled", esp_err_to_name(err));
+        return ESP_OK; /* Real gap, not fatal - board still boots/displays without it. */
+    }
+
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = AXP2101_I2C_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    err = i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_axp_dev);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "power: AXP2101 i2c device add failed: %s", esp_err_to_name(err));
+        return ESP_OK;
+    }
+
+    uint8_t chip_id = 0;
+    if (!axp2101_read_reg(AXP2101_REG_CHIP_ID, &chip_id) || chip_id != AXP2101_CHIP_ID) {
+        ESP_LOGW(TAG, "power: AXP2101 not detected (chip_id=0x%02X) - battery reporting disabled", chip_id);
+        i2c_master_bus_rm_device(s_axp_dev);
+        s_axp_dev = NULL;
+        return ESP_OK;
+    }
+
+    s_axp_ready = true;
+    ESP_LOGI(TAG, "power: AXP2101 detected");
+    return ESP_OK;
+}
 
 static kb_wake_cause_t power_wake_cause(void) {
     /* Always-on model (caps.sleep_model_deep = false) - this board never
@@ -517,28 +576,42 @@ static esp_err_t power_sleep_prepare(void) {
 }
 
 static uint32_t power_battery_mv(void) {
-    /* TODO: AXP2101 fuel gauge over I2C - not implemented, this is a
-     * placeholder, not a measurement (see module comment). */
-    return 0;
+    if (!s_axp_ready) return 0; /* capability-unavailable, not a fake reading */
+    uint8_t percent = 0;
+    if (!axp2101_read_reg(AXP2101_REG_BATT_PERCENT, &percent) || percent > 100) return 0;
+    /* AXP2101's fuel gauge reports percent directly (0xA4), not a raw
+     * cell voltage - there's no real millivolt reading to give here. This
+     * reconstructs an mv value that cadran/providers.c's existing
+     * CADRAN_PROVIDER_BATTERY_PCT case (`(mv-3300)*100/(4200-3300)`) maps
+     * back to the exact same percent, so that one shared formula - used
+     * by every board, watchy_v3 included - stays the single source of
+     * "voltage to percent" instead of this board quietly bypassing it
+     * with its own percent-to-something-else math. Not a voltage
+     * measurement; don't read it as one. */
+    return 3300 + (uint32_t)percent * 9;
 }
 
 static bool power_usb_connected(void) {
-    /* TODO: AXP2101 VBUS status over I2C. Returning false unconditionally
-     * means this board's sync mode (menu-triggered, same as watchy_v3
-     * per 2026-09-05's change) never even offers to check USB - matches
-     * "not wired up yet" honestly instead of guessing true. */
+    /* TODO: AXP2101 VBUS status over I2C - a different register than the
+     * four this pass wired up (battery percent + charge state). Returning
+     * false unconditionally means this board's sync mode (menu-triggered,
+     * same as watchy_v3 per 2026-09-05's change) never even offers to
+     * check USB - matches "not wired up yet" honestly instead of
+     * guessing true. */
     return false;
 }
 
-/* .charging left unset (NULL): AXP2101 not wired up yet, same reason
- * .battery_mv/.usb_connected above are still placeholders - see
- * docs/design/js-api.md §4's Battery section for why this specific
- * capability is genuinely board-dependent (an I2C PMIC register read
- * here vs. a GPIO read on watchy_v3), not just unimplemented on both. */
+static bool power_charging(void) {
+    if (!s_axp_ready) return false;
+    uint8_t status2 = 0;
+    if (!axp2101_read_reg(AXP2101_REG_PMU_STATUS_2, &status2)) return false;
+    return (status2 & AXP2101_STATUS2_CHARGING_BIT) != 0;
+}
+
 static const power_ops_t power_ops = {
     .init = power_init, .wake_cause = power_wake_cause,
     .sleep_prepare = power_sleep_prepare, .battery_mv = power_battery_mv,
-    .usb_connected = power_usb_connected,
+    .usb_connected = power_usb_connected, .charging = power_charging,
 };
 
 /* --------------------------------------------------------------- sensors */
